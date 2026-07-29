@@ -74,11 +74,13 @@ def test_budget_tracks_and_enforces_counts() -> None:
     budget = RunBudget(max_tasks=1, max_sources=2, max_api_calls=1)
     budget.consume_task()
     budget.consume_sources(2)
-    budget.record_api_call()
+    budget.record_call("search")
 
     assert budget.task_count == 1
     assert budget.source_count == 2
     assert budget.api_calls == 1
+    assert budget.search_calls == 1
+    assert budget.start_time.tzinfo is not None
     assert budget.elapsed_seconds >= 0
     with pytest.raises(BudgetExceededError):
         budget.consume_task()

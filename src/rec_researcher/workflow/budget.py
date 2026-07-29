@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from rec_researcher.core.exceptions import BudgetExceededError
 
@@ -16,8 +17,17 @@ class RunBudget:
     max_sources: int
     max_api_calls: int | None = None
     api_calls: int = 0
+    llm_calls: int = 0
+    search_calls: int = 0
+    embedding_calls: int = 0
+    reranker_calls: int = 0
+    fetched_pages: int = 0
     source_count: int = 0
+    passage_count: int = 0
+    warnings: list[str] = field(default_factory=list)
+    failed_tasks: list[str] = field(default_factory=list)
     task_count: int = 0
+    start_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     _started_at: float = field(default_factory=time.monotonic, repr=False)
 
     @property
@@ -53,6 +63,38 @@ class RunBudget:
         if over_limit:
             raise BudgetExceededError("maximum API call budget exceeded")
         self.api_calls += count
+
+    def record_call(self, kind: str, count: int = 1) -> None:
+        """Record one typed external call and the aggregate API count."""
+
+        if kind not in {"llm", "search", "embedding", "reranker"}:
+            raise ValueError(f"unknown call kind: {kind}")
+        self.record_api_call(count)
+        setattr(self, f"{kind}_calls", getattr(self, f"{kind}_calls") + count)
+
+    def record_failed_task(self, task_id: str) -> None:
+        """Record a failed task once."""
+
+        if task_id not in self.failed_tasks:
+            self.failed_tasks.append(task_id)
+
+    def record_fetched_page(self, count: int = 1) -> None:
+        """Record successfully fetched pages."""
+
+        self._validate_count(count)
+        self.fetched_pages += count
+
+    def record_passage(self, count: int = 1) -> None:
+        """Record passages made available to retrieval."""
+
+        self._validate_count(count)
+        self.passage_count += count
+
+    def add_warning(self, warning: str) -> None:
+        """Append a non-empty degradation warning."""
+
+        if warning and warning not in self.warnings:
+            self.warnings.append(warning)
 
     @staticmethod
     def _validate_count(count: int) -> None:

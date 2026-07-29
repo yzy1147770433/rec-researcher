@@ -1,5 +1,6 @@
 """Provider-independent domain objects for a research run."""
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -100,7 +101,24 @@ class ResearchOutput(DomainModel):
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     markdown_report: str = ""
     reproduction_suggestions: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
     statistics: RunStatistics = Field(default_factory=RunStatistics)
+
+
+class RunBudgetRecord(DomainModel):
+    """Persisted snapshot of bounded work performed during a run."""
+
+    start_time: datetime
+    elapsed_seconds: float = Field(ge=0.0)
+    llm_calls: int = Field(default=0, ge=0)
+    search_calls: int = Field(default=0, ge=0)
+    embedding_calls: int = Field(default=0, ge=0)
+    reranker_calls: int = Field(default=0, ge=0)
+    fetched_pages: int = Field(default=0, ge=0)
+    source_count: int = Field(default=0, ge=0)
+    passage_count: int = Field(default=0, ge=0)
+    warnings: list[str] = Field(default_factory=list)
+    failed_tasks: list[str] = Field(default_factory=list)
 
 
 class ResearchRun(DomainModel):
@@ -108,4 +126,6 @@ class ResearchRun(DomainModel):
 
     run_id: str
     mode: str
+    status: WorkState = WorkState.COMPLETED
     output: ResearchOutput
+    budget: RunBudgetRecord

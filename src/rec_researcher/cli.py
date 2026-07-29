@@ -31,6 +31,14 @@ def run(
     search_provider: Annotated[
         Literal["tavily"], typer.Option(help="Search provider for real mode.")
     ] = "tavily",
+    max_concurrency: Annotated[
+        int | None, typer.Option("--max-concurrency", min=1)
+    ] = None,
+    retrieval_concurrency: Annotated[
+        int | None, typer.Option("--retrieval-concurrency", min=1)
+    ] = None,
+    timeout: Annotated[float | None, typer.Option("--timeout", min=0.001)] = None,
+    max_sources: Annotated[int | None, typer.Option("--max-sources", min=1)] = None,
 ) -> None:
     """Run the research workflow."""
 
@@ -53,15 +61,23 @@ def run(
                 writer=RealReportWriter(llm),
                 mode="real",
                 max_tasks=settings.max_tasks,
-                max_sources=settings.max_total_sources,
+                max_sources=max_sources or settings.max_total_sources,
                 sources_per_query=settings.max_sources_per_query,
+                max_concurrency=max_concurrency or settings.max_concurrency,
+                retrieval_concurrency=retrieval_concurrency
+                or settings.max_concurrency,
+                timeout=timeout or settings.request_timeout_seconds,
             )
         else:
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
                 max_tasks=settings.max_tasks,
-                max_sources=settings.max_total_sources,
+                max_sources=max_sources or settings.max_total_sources,
                 sources_per_query=settings.max_sources_per_query,
+                max_concurrency=max_concurrency or settings.max_concurrency,
+                retrieval_concurrency=retrieval_concurrency
+                or settings.max_concurrency,
+                timeout=timeout or settings.request_timeout_seconds,
             )
         result = asyncio.run(orchestrator.run(question))
     except (ValueError, RecResearcherError) as exc:

@@ -33,7 +33,11 @@ def test_doctor_real_fails_when_configuration_is_missing() -> None:
 def test_run_mock_creates_output(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
-        ["run", "如何评估推荐系统？", "--mode", "mock", "--output-dir", str(tmp_path)],
+        [
+            "run", "如何评估推荐系统？", "--mode", "mock",
+            "--output-dir", str(tmp_path), "--max-concurrency", "2",
+            "--retrieval-concurrency", "1", "--timeout", "2", "--max-sources", "3",
+        ],
     )
 
     assert result.exit_code == 0

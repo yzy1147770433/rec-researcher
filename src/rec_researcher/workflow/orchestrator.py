@@ -1,17 +1,19 @@
-"""Sequential asynchronous research workflow."""
+"""Controlled asynchronous research workflow."""
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 import tempfile
-import time
 import uuid
 from pathlib import Path
 
 from rec_researcher.core.models import (
+    InquiryTask,
     ResearchOutput,
     ResearchRun,
+    RunBudgetRecord,
     RunStatistics,
     SourceRecord,
     TaskResult,
@@ -22,10 +24,11 @@ from rec_researcher.providers.base import SearchProvider
 from rec_researcher.providers.mock import MockSearchProvider
 from rec_researcher.reporting.writer import RealReportWriter, ReportWriter
 from rec_researcher.workflow.budget import RunBudget
+from rec_researcher.workflow.scheduler import AsyncTaskScheduler, ScheduledTask
 
 
 class ResearchOrchestrator:
-    """Compose planner, search provider, writer, budgets, and persistence."""
+    """Compose planning, bounded concurrent research, reporting, and persistence."""
 
     def __init__(
         self,
@@ -38,9 +41,16 @@ class ResearchOrchestrator:
         max_tasks: int = 5,
         max_sources: int = 30,
         sources_per_query: int = 5,
+        max_concurrency: int = 3,
+        retrieval_concurrency: int = 3,
+        timeout: float = 120.0,
     ) -> None:
-        """Configure an offline workflow and its work limits."""
+        """Configure providers and independent workflow/retrieval limits."""
 
+        if retrieval_concurrency < 1:
+            raise ValueError("retrieval_concurrency must be at least 1")
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
         self.output_dir = output_dir
         self.planner = planner or ResearchPlanner()
         self.search_provider = search_provider or MockSearchProvider()
@@ -49,67 +59,193 @@ class ResearchOrchestrator:
         self.max_tasks = max_tasks
         self.max_sources = max_sources
         self.sources_per_query = sources_per_query
+        self.max_concurrency = max_concurrency
+        self.retrieval_concurrency = retrieval_concurrency
+        self.timeout = timeout
 
     async def run(self, question: str) -> ResearchRun:
-        """Run tasks sequentially, isolate task errors, and persist artifacts."""
+        """Run research with a global deadline and always persist terminal runs."""
 
-        started = time.monotonic()
-        tasks = await self.planner.create_tasks(question)
+        normalized = question.strip()
+        if not normalized:
+            raise ValueError("research question must not be empty")
+        run_id = uuid.uuid4().hex
         budget = RunBudget(max_tasks=self.max_tasks, max_sources=self.max_sources)
-        budget.consume_task(len(tasks))
+        tasks: list[InquiryTask] = []
         task_results: list[TaskResult] = []
-        sources_by_id: dict[str, SourceRecord] = {}
+        sources: list[SourceRecord] = []
+        limitations: list[str] = []
+        interrupted: BaseException | None = None
 
-        for task in tasks:
-            try:
-                budget.record_api_call()
-                found = await self.search_provider.search(
-                    task.search_queries[0], limit=self.sources_per_query
-                )
-                new_sources = [item for item in found if item.id not in sources_by_id]
-                budget.consume_sources(len(new_sources))
-                sources_by_id.update((item.id, item) for item in new_sources)
-                task_results.append(
-                    TaskResult(
-                        task_id=task.id,
-                        state=WorkState.COMPLETED,
-                        source_ids=[item.id for item in found],
-                        findings=[item.snippet for item in found],
-                    )
-                )
-            except Exception as exc:  # task boundary intentionally isolates providers
-                task_results.append(
-                    TaskResult(
-                        task_id=task.id,
-                        state=WorkState.FAILED,
-                        errors=[f"{type(exc).__name__}: {exc}"],
-                    )
-                )
+        try:
+            async with asyncio.timeout(self.timeout):
+                tasks = await self.planner.create_tasks(normalized)
+                budget.consume_task(len(tasks))
+                task_results, sources = await self._research(tasks, budget)
+        except TimeoutError:
+            limitations.append(f"global timeout after {self.timeout:g} seconds")
+            task_results = self._fill_missing_results(
+                tasks, task_results, "global timeout"
+            )
+        except (KeyboardInterrupt, asyncio.CancelledError) as exc:
+            limitations.append(f"run interrupted: {type(exc).__name__}")
+            task_results = self._fill_missing_results(
+                tasks, task_results, "run interrupted"
+            )
+            interrupted = exc
 
-        sources = list(sources_by_id.values())
+        failures = [
+            result for result in task_results if result.state != WorkState.COMPLETED
+        ]
+        for result in failures:
+            budget.record_failed_task(result.task_id)
+        limitations.extend(
+            f"{result.task_id}: {error}"
+            for result in failures
+            for error in result.errors[:1]
+        )
+        if failures and not limitations:
+            limitations.append("部分研究任务失败，报告仅基于可用来源。")
+        budget.warnings.extend(limitations)
+
         statistics = RunStatistics(
             planned_tasks=len(tasks),
             completed_tasks=sum(r.state == WorkState.COMPLETED for r in task_results),
             failed_tasks=sum(r.state == WorkState.FAILED for r in task_results),
             sources_found=len(sources),
-            elapsed_seconds=time.monotonic() - started,
+            elapsed_seconds=budget.elapsed_seconds,
         )
         output = ResearchOutput(
-            question=question.strip(),
+            question=normalized,
             tasks=tasks,
             task_results=task_results,
             sources=sources,
             statistics=statistics,
+            limitations=limitations,
             reproduction_suggestions=[
                 "固定随机种子并保存配置。",
                 "记录数据集版本与划分策略。",
             ],
         )
-        report = self.writer.write(output)
-        output.markdown_report = await report if inspect.isawaitable(report) else report
-        run = ResearchRun(run_id=uuid.uuid4().hex, mode=self.mode, output=output)
+        await self._write_report(output)
+        all_failed = bool(task_results) and not any(
+            item.state == WorkState.COMPLETED for item in task_results
+        )
+        status = (
+            WorkState.FAILED
+            if all_failed or (not tasks and limitations)
+            else WorkState.COMPLETED
+        )
+        run = ResearchRun(
+            run_id=run_id,
+            mode=self.mode,
+            status=status,
+            output=output,
+            budget=RunBudgetRecord(
+                start_time=budget.start_time,
+                elapsed_seconds=budget.elapsed_seconds,
+                llm_calls=budget.llm_calls,
+                search_calls=budget.search_calls,
+                embedding_calls=budget.embedding_calls,
+                reranker_calls=budget.reranker_calls,
+                fetched_pages=budget.fetched_pages,
+                source_count=budget.source_count,
+                passage_count=budget.passage_count,
+                warnings=budget.warnings,
+                failed_tasks=budget.failed_tasks,
+            ),
+        )
         self._persist(run)
+        if interrupted is not None:
+            raise interrupted
         return run
+
+    async def _research(
+        self, tasks: list[InquiryTask], budget: RunBudget
+    ) -> tuple[list[TaskResult], list[SourceRecord]]:
+        retrieval_limit = asyncio.Semaphore(self.retrieval_concurrency)
+
+        async def search(task: InquiryTask) -> list[SourceRecord]:
+            async with retrieval_limit:
+                budget.record_call("search")
+                if not task.search_queries:
+                    return []
+                return await self.search_provider.search(
+                    task.search_queries[0], limit=self.sources_per_query
+                )
+
+        scheduled = [
+            ScheduledTask(
+                id=task.id,
+                operation=lambda task=task: search(task),
+                dependencies=([task.parent_id] if task.parent_id else []),
+            )
+            for task in tasks
+        ]
+        scheduler = AsyncTaskScheduler(
+            max_concurrency=self.max_concurrency, task_timeout=self.timeout
+        )
+        outcomes = await scheduler.run(scheduled)
+        sources_by_id: dict[str, SourceRecord] = {}
+        results: list[TaskResult] = []
+        for outcome in outcomes:
+            found = outcome.value or []
+            retained: list[SourceRecord] = []
+            for source in found:
+                if source.id in sources_by_id:
+                    retained.append(source)
+                elif len(sources_by_id) < self.max_sources:
+                    sources_by_id[source.id] = source
+                    retained.append(source)
+            if outcome.state == WorkState.COMPLETED:
+                results.append(
+                    TaskResult(
+                        task_id=outcome.task_id,
+                        state=outcome.state,
+                        source_ids=[item.id for item in retained],
+                        findings=[item.snippet for item in retained],
+                    )
+                )
+            else:
+                results.append(
+                    TaskResult(
+                        task_id=outcome.task_id,
+                        state=outcome.state,
+                        errors=[outcome.error or "task failed"],
+                    )
+                )
+        budget.consume_sources(len(sources_by_id))
+        return results, list(sources_by_id.values())
+
+    async def _write_report(self, output: ResearchOutput) -> None:
+        try:
+            report = self.writer.write(output)
+            output.markdown_report = (
+                await report if inspect.isawaitable(report) else report
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve the run on writer failure
+            warning = (
+                "report writer failed; used fallback: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            output.limitations.append(warning)
+            output.markdown_report = ReportWriter().write(output)
+        if output.limitations and "## 局限性" not in output.markdown_report:
+            details = "\n".join(f"- {item}" for item in output.limitations)
+            output.markdown_report += f"\n\n## 局限性\n\n{details}\n"
+
+    @staticmethod
+    def _fill_missing_results(
+        tasks: list[InquiryTask], results: list[TaskResult], error: str
+    ) -> list[TaskResult]:
+        by_id = {result.task_id: result for result in results}
+        return [
+            by_id.get(
+                task.id,
+                TaskResult(task_id=task.id, state=WorkState.FAILED, errors=[error]),
+            )
+            for task in tasks
+        ]
 
     def _persist(self, run: ResearchRun) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)

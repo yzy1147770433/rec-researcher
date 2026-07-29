@@ -22,6 +22,11 @@ class FailingSearchProvider:
         return await MockSearchProvider().search(query, limit=limit)
 
 
+class AlwaysFailingSearchProvider:
+    async def search(self, query: str, *, limit: int) -> list[SourceRecord]:
+        raise RuntimeError("all unavailable")
+
+
 async def test_normal_run_writes_traceable_outputs(tmp_path: Path) -> None:
     orchestrator = ResearchOrchestrator(output_dir=tmp_path)
     run = await orchestrator.run("序列推荐如何评估？")
@@ -61,3 +66,15 @@ async def test_two_runs_do_not_overwrite_each_other(tmp_path: Path) -> None:
     assert first.run_id != second.run_id
     assert (tmp_path / first.run_id / "report.md").exists()
     assert (tmp_path / second.run_id / "report.md").exists()
+
+
+async def test_all_tasks_fail_but_run_json_is_saved(tmp_path: Path) -> None:
+    run = await ResearchOrchestrator(
+        output_dir=tmp_path, search_provider=AlwaysFailingSearchProvider()
+    ).run("推荐系统")
+
+    assert run.status == WorkState.FAILED
+    assert run.output.limitations
+    assert run.budget.failed_tasks == [f"task-{index}" for index in range(1, 6)]
+    assert run.budget.search_calls == 5
+    assert (tmp_path / run.run_id / "run.json").exists()
