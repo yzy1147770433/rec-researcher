@@ -1,7 +1,7 @@
 [project]
 name = "rec-researcher"
 version = "0.1.0"
-description = "Add your description here"
+description = "Offline-testable research workflow for recommender-system questions"
 readme = "README.md"
 authors = [
     { name = "yzy1147770433", email = "yzy1147770433@gmail.com" }
@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-rec-researcher = "rec_researcher:main"
+rec-researcher = "rec_researcher.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.11.32,<0.12.0"]
@@ -37,3 +37,18 @@ dev = [
     "respx>=0.23.1",
     "ruff>=0.16.0",
 ]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+markers = [
+    "network: tests that require network access and credentials",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN"]
