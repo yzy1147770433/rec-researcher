@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=2, ge=0)
     max_sources_per_query: int = Field(default=5, ge=1)
     max_total_sources: int = Field(default=30, ge=1)
+    max_tasks: int = Field(default=5, ge=1)
 
     llm_base_url: str | None = None
     llm_api_key: SecretStr | None = None

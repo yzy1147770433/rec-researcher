@@ -98,3 +98,11 @@ class ResearchOutput(DomainModel):
     markdown_report: str = ""
     reproduction_suggestions: list[str] = Field(default_factory=list)
     statistics: RunStatistics = Field(default_factory=RunStatistics)
+
+
+class ResearchRun(DomainModel):
+    """Persisted metadata and structured result for one workflow run."""
+
+    run_id: str
+    mode: str
+    output: ResearchOutput

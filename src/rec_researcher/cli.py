@@ -1,14 +1,48 @@
 """Command-line interface for local project diagnostics."""
 
+import asyncio
 from importlib.util import find_spec
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Literal
 
 import typer
 
 from rec_researcher import __version__
 from rec_researcher.core.settings import Settings
+from rec_researcher.workflow.orchestrator import ResearchOrchestrator
 
 app = typer.Typer(no_args_is_help=True, help="Research recommender-system questions.")
+
+
+@app.command()
+def run(
+    question: Annotated[str, typer.Argument(help="Research question.")],
+    mode: Annotated[
+        Literal["mock", "real"], typer.Option(help="Provider mode.")
+    ] = "mock",
+    output_dir: Annotated[
+        Path | None, typer.Option(help="Directory for run artifacts.")
+    ] = None,
+) -> None:
+    """Run the research workflow."""
+
+    if mode != "mock":
+        typer.echo("Real mode is not implemented.", err=True)
+        raise typer.Exit(code=2)
+    settings = Settings()
+    orchestrator = ResearchOrchestrator(
+        output_dir=output_dir or settings.output_dir,
+        max_tasks=settings.max_tasks,
+        max_sources=settings.max_total_sources,
+        sources_per_query=settings.max_sources_per_query,
+    )
+    try:
+        result = asyncio.run(orchestrator.run(question))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"Run ID: {result.run_id}")
+    typer.echo(f"Report: {orchestrator.output_dir / result.run_id / 'report.md'}")
 
 
 @app.command()
