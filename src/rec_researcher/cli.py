@@ -67,6 +67,7 @@ def run(
                 retrieval_concurrency=retrieval_concurrency
                 or settings.max_concurrency,
                 timeout=timeout or settings.request_timeout_seconds,
+                evidence_excerpt_length=settings.evidence_excerpt_length,
             )
         else:
             orchestrator = ResearchOrchestrator(
@@ -78,6 +79,7 @@ def run(
                 retrieval_concurrency=retrieval_concurrency
                 or settings.max_concurrency,
                 timeout=timeout or settings.request_timeout_seconds,
+                evidence_excerpt_length=settings.evidence_excerpt_length,
             )
         result = asyncio.run(orchestrator.run(question))
     except (ValueError, RecResearcherError) as exc:

@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     rerank_top_k: int = Field(default=10, ge=1)
     mmr_top_k: int = Field(default=8, ge=1)
     mmr_lambda: float = Field(default=0.75, ge=0.0, le=1.0)
+    evidence_excerpt_length: int = Field(default=600, ge=1)
 
     def safe_summary(self) -> dict[str, bool]:
         """Return presence flags only, never configuration or secret values."""

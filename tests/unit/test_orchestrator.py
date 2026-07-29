@@ -34,6 +34,8 @@ async def test_normal_run_writes_traceable_outputs(tmp_path: Path) -> None:
 
     assert (run_dir / "report.md").is_file()
     assert (run_dir / "sources.json").is_file()
+    assert (run_dir / "evidence.json").is_file()
+    assert (run_dir / "validation.json").is_file()
     assert (run_dir / "run.json").is_file()
     assert json.loads((run_dir / "run.json").read_text())["run_id"] == run.run_id
 
@@ -43,6 +45,8 @@ async def test_normal_run_writes_traceable_outputs(tmp_path: Path) -> None:
     defined = set(re.findall(r"\[(S\d+)\]", references))
     assert cited
     assert cited <= defined
+    assert run.output.evidence
+    assert json.loads((run_dir / "validation.json").read_text())["valid"]
 
 
 async def test_task_failure_is_recorded_and_tasks_continue(

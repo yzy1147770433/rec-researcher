@@ -30,11 +30,11 @@ def test_source_passage_and_evidence_preserve_links() -> None:
     )
     passage = PassageRecord(id="passage-1", source_id=source.id, text="Evidence text")
     evidence = EvidenceRecord(
-        id="evidence-1",
+        evidence_id="evidence-1",
         source_id=source.id,
         passage_id=passage.id,
-        claim="A supported claim",
-        quote=passage.text,
+        claim_hint="A supported claim",
+        excerpt=passage.text,
     )
 
     assert str(source.url) == "https://example.com/study"

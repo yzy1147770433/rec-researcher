@@ -11,6 +11,7 @@ from pathlib import Path
 
 from rec_researcher.core.models import (
     InquiryTask,
+    PassageRecord,
     ResearchOutput,
     ResearchRun,
     RunBudgetRecord,
@@ -19,6 +20,7 @@ from rec_researcher.core.models import (
     TaskResult,
     WorkState,
 )
+from rec_researcher.evidence.builder import EvidenceBuilder
 from rec_researcher.planning.planner import ResearchPlanner
 from rec_researcher.providers.base import SearchProvider
 from rec_researcher.providers.mock import MockSearchProvider
@@ -44,6 +46,7 @@ class ResearchOrchestrator:
         max_concurrency: int = 3,
         retrieval_concurrency: int = 3,
         timeout: float = 120.0,
+        evidence_excerpt_length: int = 600,
     ) -> None:
         """Configure providers and independent workflow/retrieval limits."""
 
@@ -62,6 +65,9 @@ class ResearchOrchestrator:
         self.max_concurrency = max_concurrency
         self.retrieval_concurrency = retrieval_concurrency
         self.timeout = timeout
+        self.evidence_builder = EvidenceBuilder(
+            max_excerpt_length=evidence_excerpt_length
+        )
 
     async def run(self, question: str) -> ResearchRun:
         """Run research with a global deadline and always persist terminal runs."""
@@ -113,13 +119,36 @@ class ResearchOrchestrator:
             completed_tasks=sum(r.state == WorkState.COMPLETED for r in task_results),
             failed_tasks=sum(r.state == WorkState.FAILED for r in task_results),
             sources_found=len(sources),
+            passages_created=len(sources),
+            evidence_items=len(sources),
             elapsed_seconds=budget.elapsed_seconds,
         )
+        passages = [
+            PassageRecord(
+                id=f"passage-{index}",
+                source_id=source.id,
+                text=source.snippet,
+                position=index - 1,
+                end_offset=len(source.snippet),
+            )
+            for index, source in enumerate(sources, start=1)
+        ]
+        evidence = self.evidence_builder.build(
+            passages,
+            sources,
+            relevance_scores={
+                passage.id: min(1.0, max(0.0, sources[index].score or 0.0))
+                for index, passage in enumerate(passages)
+            },
+        )
+        budget.record_passage(len(passages))
         output = ResearchOutput(
             question=normalized,
             tasks=tasks,
             task_results=task_results,
             sources=sources,
+            passages=passages,
+            evidence=evidence,
             statistics=statistics,
             limitations=limitations,
             reproduction_suggestions=[
@@ -223,13 +252,16 @@ class ResearchOrchestrator:
             output.markdown_report = (
                 await report if inspect.isawaitable(report) else report
             )
+            output.validation = self.writer.last_validation
         except Exception as exc:  # noqa: BLE001 - preserve the run on writer failure
             warning = (
                 "report writer failed; used fallback: "
                 f"{type(exc).__name__}: {exc}"
             )
             output.limitations.append(warning)
-            output.markdown_report = ReportWriter().write(output)
+            fallback = ReportWriter()
+            output.markdown_report = fallback.write(output)
+            output.validation = fallback.last_validation
         if output.limitations and "## 局限性" not in output.markdown_report:
             details = "\n".join(f"- {item}" for item in output.limitations)
             output.markdown_report += f"\n\n## 局限性\n\n{details}\n"
@@ -260,6 +292,15 @@ class ResearchOrchestrator:
                 [source.model_dump(mode="json") for source in run.output.sources]
             ),
             encoding="utf-8",
+        )
+        (temporary / "evidence.json").write_text(
+            self._json(
+                [item.model_dump(mode="json") for item in run.output.evidence]
+            ),
+            encoding="utf-8",
+        )
+        (temporary / "validation.json").write_text(
+            run.output.validation.model_dump_json(indent=2), encoding="utf-8"
         )
         (temporary / "run.json").write_text(
             run.model_dump_json(indent=2), encoding="utf-8"

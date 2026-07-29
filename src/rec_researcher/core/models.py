@@ -58,12 +58,25 @@ class PassageRecord(DomainModel):
 class EvidenceRecord(DomainModel):
     """Evidence that binds a finding to both its passage and source."""
 
-    id: str
+    evidence_id: str
     source_id: str
     passage_id: str
-    claim: str
-    quote: str
-    relevance: float | None = Field(default=None, ge=0.0, le=1.0)
+    claim_hint: str
+    excerpt: str
+    relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class CitationValidation(DomainModel):
+    """Deterministic result of checking one generated report."""
+
+    valid: bool = False
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    citation_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    source_diversity: float = Field(default=0.0, ge=0.0, le=1.0)
+    cited_source_count: int = Field(default=0, ge=0)
+    available_source_count: int = Field(default=0, ge=0)
+    uncited_long_paragraphs: list[str] = Field(default_factory=list)
 
 
 class TaskResult(DomainModel):
@@ -100,6 +113,7 @@ class ResearchOutput(DomainModel):
     passages: list[PassageRecord] = Field(default_factory=list)
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     markdown_report: str = ""
+    validation: CitationValidation = Field(default_factory=CitationValidation)
     reproduction_suggestions: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     statistics: RunStatistics = Field(default_factory=RunStatistics)
