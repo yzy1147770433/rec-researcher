@@ -45,3 +45,31 @@ def test_run_rejects_empty_question() -> None:
 
     assert result.exit_code == 2
     assert "must not be empty" in result.output
+
+
+def test_run_real_fails_early_when_configuration_is_missing(
+    tmp_path: Path,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "question",
+            "--mode",
+            "real",
+            "--search-provider",
+            "tavily",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        env={
+            "REC_LLM_BASE_URL": "",
+            "REC_LLM_API_KEY": "",
+            "REC_LLM_MODEL": "",
+            "REC_TAVILY_API_KEY": "",
+        },
+    )
+
+    assert result.exit_code == 2
+    assert "Missing real-mode configuration" in result.output
+    assert list(tmp_path.iterdir()) == []

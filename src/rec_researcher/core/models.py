@@ -40,6 +40,7 @@ class SourceRecord(DomainModel):
     url: HttpUrl
     snippet: str
     provider: str
+    score: float | None = None
 
 
 class PassageRecord(DomainModel):

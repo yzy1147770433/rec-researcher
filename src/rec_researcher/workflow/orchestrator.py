@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import tempfile
 import time
@@ -19,7 +20,7 @@ from rec_researcher.core.models import (
 from rec_researcher.planning.planner import ResearchPlanner
 from rec_researcher.providers.base import SearchProvider
 from rec_researcher.providers.mock import MockSearchProvider
-from rec_researcher.reporting.writer import ReportWriter
+from rec_researcher.reporting.writer import RealReportWriter, ReportWriter
 from rec_researcher.workflow.budget import RunBudget
 
 
@@ -32,7 +33,8 @@ class ResearchOrchestrator:
         output_dir: Path = Path("outputs"),
         planner: ResearchPlanner | None = None,
         search_provider: SearchProvider | None = None,
-        writer: ReportWriter | None = None,
+        writer: ReportWriter | RealReportWriter | None = None,
+        mode: str = "mock",
         max_tasks: int = 5,
         max_sources: int = 30,
         sources_per_query: int = 5,
@@ -43,6 +45,7 @@ class ResearchOrchestrator:
         self.planner = planner or ResearchPlanner()
         self.search_provider = search_provider or MockSearchProvider()
         self.writer = writer or ReportWriter()
+        self.mode = mode
         self.max_tasks = max_tasks
         self.max_sources = max_sources
         self.sources_per_query = sources_per_query
@@ -102,8 +105,9 @@ class ResearchOrchestrator:
                 "记录数据集版本与划分策略。",
             ],
         )
-        output.markdown_report = self.writer.write(output)
-        run = ResearchRun(run_id=uuid.uuid4().hex, mode="mock", output=output)
+        report = self.writer.write(output)
+        output.markdown_report = await report if inspect.isawaitable(report) else report
+        run = ResearchRun(run_id=uuid.uuid4().hex, mode=self.mode, output=output)
         self._persist(run)
         return run
 

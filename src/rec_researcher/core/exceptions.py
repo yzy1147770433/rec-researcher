@@ -13,6 +13,10 @@ class ProviderError(RecResearcherError):
     """Raised when an external provider operation fails."""
 
 
+class LanguageModelResponseError(ProviderError):
+    """Raised when an LLM response is missing or cannot be parsed as requested."""
+
+
 class RetrievalError(RecResearcherError):
     """Raised when document retrieval cannot complete."""
 

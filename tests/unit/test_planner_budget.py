@@ -1,6 +1,9 @@
 import pytest
 
-from rec_researcher.core.exceptions import BudgetExceededError
+from rec_researcher.core.exceptions import (
+    BudgetExceededError,
+    LanguageModelResponseError,
+)
 from rec_researcher.planning.planner import ResearchPlanner
 from rec_researcher.workflow.budget import RunBudget
 
@@ -27,6 +30,44 @@ async def test_planner_creates_deterministic_bounded_tasks() -> None:
 async def test_planner_rejects_empty_question() -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         await ResearchPlanner().create_tasks("  ")
+
+
+class StubLanguageModel:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
+        self.calls = 0
+
+    async def generate(self, prompt: str) -> str:
+        response = self.responses[self.calls]
+        self.calls += 1
+        return response
+
+
+@pytest.mark.asyncio
+async def test_real_planner_accepts_markdown_json() -> None:
+    response = """```json
+{"tasks":[
+  {"objective":"one","queries":["q1"]},
+  {"objective":"two","queries":["q2"]},
+  {"objective":"three","queries":["q3"]}
+]}
+```"""
+    model = StubLanguageModel([response])
+
+    tasks = await ResearchPlanner(model).create_tasks("question")
+
+    assert [task.question for task in tasks] == ["one", "two", "three"]
+    assert model.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_real_planner_repairs_once_then_fails_clearly() -> None:
+    model = StubLanguageModel(["invalid", "still invalid"])
+
+    with pytest.raises(LanguageModelResponseError, match="after one format repair"):
+        await ResearchPlanner(model).create_tasks("question")
+
+    assert model.calls == 2
 
 
 def test_budget_tracks_and_enforces_counts() -> None:

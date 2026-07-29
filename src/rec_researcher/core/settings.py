@@ -61,16 +61,16 @@ class Settings(BaseSettings):
 
         return {name: _is_configured(value) for name, value in self.__dict__.items()}
 
-    def missing_real_configuration(self) -> list[str]:
-        """List settings required by the initial real-provider composition."""
+    def missing_real_configuration(
+        self, *, search_provider: Literal["tavily"] = "tavily"
+    ) -> list[str]:
+        """List settings required by the selected real-provider composition."""
 
         required = {
             "llm_base_url": self.llm_base_url,
             "llm_api_key": self.llm_api_key,
             "llm_model": self.llm_model,
-            "tavily_api_key": self.tavily_api_key,
-            "siliconflow_api_key": self.siliconflow_api_key,
-            "embedding_model": self.embedding_model,
-            "reranker_model": self.reranker_model,
         }
+        if search_provider == "tavily":
+            required["tavily_api_key"] = self.tavily_api_key
         return [name for name, value in required.items() if not _is_configured(value)]

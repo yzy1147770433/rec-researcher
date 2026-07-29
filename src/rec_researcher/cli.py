@@ -8,7 +8,12 @@ from typing import Annotated, Literal
 import typer
 
 from rec_researcher import __version__
+from rec_researcher.core.exceptions import RecResearcherError
 from rec_researcher.core.settings import Settings
+from rec_researcher.planning.planner import ResearchPlanner
+from rec_researcher.providers.llm_http import OpenAICompatibleLanguageModel
+from rec_researcher.providers.tavily import TavilySearchProvider
+from rec_researcher.reporting.writer import RealReportWriter
 from rec_researcher.workflow.orchestrator import ResearchOrchestrator
 
 app = typer.Typer(no_args_is_help=True, help="Research recommender-system questions.")
@@ -23,22 +28,43 @@ def run(
     output_dir: Annotated[
         Path | None, typer.Option(help="Directory for run artifacts.")
     ] = None,
+    search_provider: Annotated[
+        Literal["tavily"], typer.Option(help="Search provider for real mode.")
+    ] = "tavily",
 ) -> None:
     """Run the research workflow."""
 
-    if mode != "mock":
-        typer.echo("Real mode is not implemented.", err=True)
-        raise typer.Exit(code=2)
     settings = Settings()
-    orchestrator = ResearchOrchestrator(
-        output_dir=output_dir or settings.output_dir,
-        max_tasks=settings.max_tasks,
-        max_sources=settings.max_total_sources,
-        sources_per_query=settings.max_sources_per_query,
-    )
     try:
+        if mode == "real":
+            missing = settings.missing_real_configuration(
+                search_provider=search_provider
+            )
+            if missing:
+                raise ValueError(
+                    "Missing real-mode configuration: " + ", ".join(missing)
+                )
+            llm = OpenAICompatibleLanguageModel(settings)
+            search = TavilySearchProvider(settings)
+            orchestrator = ResearchOrchestrator(
+                output_dir=output_dir or settings.output_dir,
+                planner=ResearchPlanner(llm),
+                search_provider=search,
+                writer=RealReportWriter(llm),
+                mode="real",
+                max_tasks=settings.max_tasks,
+                max_sources=settings.max_total_sources,
+                sources_per_query=settings.max_sources_per_query,
+            )
+        else:
+            orchestrator = ResearchOrchestrator(
+                output_dir=output_dir or settings.output_dir,
+                max_tasks=settings.max_tasks,
+                max_sources=settings.max_total_sources,
+                sources_per_query=settings.max_sources_per_query,
+            )
         result = asyncio.run(orchestrator.run(question))
-    except ValueError as exc:
+    except (ValueError, RecResearcherError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     typer.echo(f"Run ID: {result.run_id}")
