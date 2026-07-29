@@ -1,0 +1,5 @@
+{"id":"generative-vs-two-tower","question":"生成式推荐与传统双塔模型有什么区别？"}
+{"id":"semantic-id","question":"Semantic ID 在推荐系统中的作用是什么？"}
+{"id":"itemcf-vs-vector","question":"ItemCF 与向量召回有什么区别？"}
+{"id":"single-gpu-paper","question":"哪些推荐系统论文适合单卡复现？"}
+{"id":"din-deepfm-mmoe","question":"DIN、DeepFM、MMOE 分别适合什么任务，它们的差异是什么？"}

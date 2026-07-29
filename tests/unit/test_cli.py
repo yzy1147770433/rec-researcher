@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -77,3 +78,25 @@ def test_run_real_fails_early_when_configuration_is_missing(
     assert result.exit_code == 2
     assert "Missing real-mode configuration" in result.output
     assert list(tmp_path.iterdir()) == []
+
+
+def test_benchmark_mock_writes_summary(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "examples/bench/smoke5.jsonl",
+            "--mode",
+            "mock",
+            "--output-dir",
+            str(tmp_path),
+            "--max-concurrency",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Cases: 5/5 successful" in result.stdout
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["total_cases"] == 5
+    assert summary["mean_metrics"]["recall_at_k"] is None

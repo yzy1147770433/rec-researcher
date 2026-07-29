@@ -10,6 +10,7 @@ import typer
 from rec_researcher import __version__
 from rec_researcher.core.exceptions import RecResearcherError
 from rec_researcher.core.settings import Settings
+from rec_researcher.evaluation.runner import BenchmarkRunner
 from rec_researcher.planning.planner import ResearchPlanner
 from rec_researcher.providers.llm_http import OpenAICompatibleLanguageModel
 from rec_researcher.providers.tavily import TavilySearchProvider
@@ -17,6 +18,42 @@ from rec_researcher.reporting.writer import RealReportWriter
 from rec_researcher.workflow.orchestrator import ResearchOrchestrator
 
 app = typer.Typer(no_args_is_help=True, help="Research recommender-system questions.")
+
+
+@app.command()
+def benchmark(
+    benchmark_path: Annotated[Path, typer.Argument(help="JSONL benchmark file.")],
+    mode: Annotated[
+        Literal["mock"], typer.Option(help="Benchmark provider mode.")
+    ] = "mock",
+    output_dir: Annotated[
+        Path | None, typer.Option(help="Directory for benchmark artifacts.")
+    ] = None,
+    max_concurrency: Annotated[
+        int, typer.Option("--max-concurrency", min=1)
+    ] = 3,
+) -> None:
+    """Run a failure-isolated lightweight benchmark."""
+
+    settings = Settings()
+    destination = output_dir or (
+        settings.output_dir / "benchmarks" / benchmark_path.stem
+    )
+    try:
+        summary = asyncio.run(
+            BenchmarkRunner(
+                output_dir=destination,
+                mode=mode,
+                max_concurrency=max_concurrency,
+            ).run(benchmark_path)
+        )
+    except (OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(
+        f"Cases: {summary.successful_cases}/{summary.total_cases} successful"
+    )
+    typer.echo(f"Summary: {destination / 'summary.json'}")
 
 
 @app.command()
