@@ -29,6 +29,8 @@ async def test_milvus_lite_upsert_and_search(tmp_path: Path) -> None:
     finally:
         index.close()
 
+    assert database.exists()
+
     reopened = MilvusLiteIndex(database)
     try:
         with pytest.raises(ValueError, match="expects 2, got 3"):

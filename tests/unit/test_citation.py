@@ -22,3 +22,4 @@ def test_registry_is_stable_and_deduplicates_urls() -> None:
     assert registry.label_for_source("alias") == "S1"
     assert registry.label_for_source("beta") == "S2"
     assert registry.references_markdown().count("[S1]") == 1
+    assert registry.references_markdown().splitlines()[2].startswith("[S1]")

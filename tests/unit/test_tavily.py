@@ -94,3 +94,18 @@ async def test_error_does_not_expose_api_key() -> None:
             )
 
     assert "test-secret" not in str(caught.value)
+
+
+async def test_network_error_is_wrapped_without_details() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("secret network details", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(
+            ProviderError, match="Tavily network request failed: ConnectError"
+        ) as caught:
+            await TavilySearchProvider(_settings(), client=client).search(
+                "query", limit=1
+            )
+
+    assert "secret network details" not in str(caught.value)

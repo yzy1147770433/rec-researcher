@@ -12,7 +12,7 @@ class StubLanguageModel:
         return (
             "# Report\n\n## Findings\n\nSupported factual claim with sufficient "
             "detail for verification [S1].\n\n## References\n\n"
-            "- [S1] Title — https://example.com/source"
+            "- [S1] Model title — https://wrong.example/source"
         )
 
 
@@ -34,6 +34,9 @@ async def test_real_writer_uses_structured_sources() -> None:
     report = await RealReportWriter(StubLanguageModel()).write(result)
 
     assert "[S1]" in report
+    assert report.count("## References") == 1
+    assert "[S1] Title — https://example.com/source" in report
+    assert "wrong.example" not in report
 
 
 class RepairingLanguageModel:
@@ -82,6 +85,8 @@ async def test_real_writer_repairs_once_and_preserves_failed_original(
         assert "Corrected" in report
     else:
         assert "Bad claim [S9]" in report
+        assert "## References" in report
+        assert "[S1] Title — https://example.com/source" in report
         assert writer.last_validation.errors
 
 

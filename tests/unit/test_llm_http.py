@@ -60,6 +60,24 @@ async def test_does_not_retry_auth_errors_and_does_not_expose_key(
     assert "test-secret" not in str(caught.value)
 
 
+async def test_retries_network_errors_and_wraps_final_failure() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("secret details", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        model = OpenAICompatibleLanguageModel(_settings(), client=client)
+        with pytest.raises(
+            ProviderError, match="LLM network request failed: ReadTimeout"
+        ):
+            await model.generate("question")
+
+    assert calls == 3
+
+
 @pytest.mark.parametrize(
     "base_url",
     [

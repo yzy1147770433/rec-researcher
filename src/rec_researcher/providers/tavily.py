@@ -37,18 +37,23 @@ class TavilySearchProvider:
 
         if limit <= 0:
             return []
-        response = await self._client.post(
-            f"{self.base_url}/search",
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json={
-                "query": query,
-                "search_depth": "basic",
-                "include_answer": False,
-                "include_raw_content": False,
-                "max_results": limit,
-            },
-            timeout=self._timeout,
-        )
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/search",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={
+                    "query": query,
+                    "search_depth": "basic",
+                    "include_answer": False,
+                    "include_raw_content": False,
+                    "max_results": limit,
+                },
+                timeout=self._timeout,
+            )
+        except httpx.RequestError as exc:
+            raise ProviderError(
+                "Tavily network request failed: " + type(exc).__name__
+            ) from exc
         if not response.is_success:
             body = response.text[:500].replace(self._api_key, "[REDACTED]")
             raise ProviderError(

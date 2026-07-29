@@ -78,12 +78,17 @@ class OpenAICompatibleLanguageModel:
         )
         async for attempt in retrying:
             with attempt:
-                response = await self._client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self._api_key}"},
-                    json={"model": self.model, "messages": messages},
-                    timeout=self._timeout,
-                )
+                try:
+                    response = await self._client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        json={"model": self.model, "messages": messages},
+                        timeout=self._timeout,
+                    )
+                except httpx.RequestError as exc:
+                    raise _RetryableHTTPError(
+                        "LLM network request failed: " + type(exc).__name__
+                    ) from exc
                 self._raise_for_status(response)
                 try:
                     message = response.json()["choices"][0]["message"]

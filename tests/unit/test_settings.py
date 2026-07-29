@@ -68,6 +68,12 @@ def test_settings_use_rec_environment_prefix(monkeypatch: pytest.MonkeyPatch) ->
     assert settings.max_concurrency == 7
 
 
+def test_settings_default_to_persistent_milvus_database() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.milvus_uri == "./data/rec_researcher.db"
+
+
 def test_safe_summary_never_exposes_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     secret = "super-secret-value"
     monkeypatch.setenv("REC_LLM_API_KEY", secret)

@@ -85,8 +85,13 @@ def run(
                 raise ValueError(
                     "Missing real-mode configuration: " + ", ".join(missing)
                 )
-            llm = OpenAICompatibleLanguageModel(settings)
-            search = TavilySearchProvider(settings)
+            provider_settings = (
+                settings.model_copy(update={"request_timeout_seconds": timeout})
+                if timeout is not None
+                else settings
+            )
+            llm = OpenAICompatibleLanguageModel(provider_settings)
+            search = TavilySearchProvider(provider_settings)
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
                 planner=ResearchPlanner(llm),
@@ -97,10 +102,13 @@ def run(
                 max_sources=max_sources or settings.max_total_sources,
                 sources_per_query=settings.max_sources_per_query,
                 max_concurrency=max_concurrency or settings.max_concurrency,
-                retrieval_concurrency=retrieval_concurrency or settings.max_concurrency,
+                retrieval_concurrency=(
+                    retrieval_concurrency or settings.max_concurrency
+                ),
                 timeout=timeout or settings.request_timeout_seconds,
                 evidence_excerpt_length=settings.evidence_excerpt_length,
             )
+            result = asyncio.run(orchestrator.run(question))
         else:
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
@@ -112,7 +120,7 @@ def run(
                 timeout=timeout or settings.request_timeout_seconds,
                 evidence_excerpt_length=settings.evidence_excerpt_length,
             )
-        result = asyncio.run(orchestrator.run(question))
+            result = asyncio.run(orchestrator.run(question))
     except (ValueError, RecResearcherError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc

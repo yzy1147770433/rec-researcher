@@ -46,3 +46,36 @@ def test_rejects_unknown_zero_gap_and_missing_major_citation() -> None:
     assert any("[S0]" in error for error in result.errors)
     assert any("gap" in error or "consecutive" in error for error in result.errors)
     assert any("major" in error for error in result.errors)
+
+
+def test_matches_s1_through_s8_with_plain_and_bulleted_references() -> None:
+    eight_sources = [
+        SourceRecord(
+            id=f"source-{index}",
+            title=f"Title {index}",
+            url=f"https://example.com/{index}",
+            snippet="text",
+            provider="test",
+        )
+        for index in range(1, 9)
+    ]
+    body_citations = " ".join(f"[S{index}]" for index in range(1, 9))
+    references = "\n".join(
+        (
+            f"[S{index}] Title {index} — https://example.com/{index}"
+            if index % 2
+            else f"- [S{index}] Title {index} — https://example.com/{index}"
+        )
+        for index in range(1, 9)
+    )
+    report = (
+        "# Report\n\n## Findings\n\n"
+        f"Every source is cited in this factual summary: {body_citations}\n\n"
+        f"## References\n\n{references}\n"
+    )
+
+    result = CitationVerifier().verify(report, eight_sources)
+
+    assert result.valid, result.errors
+    assert result.cited_source_count == 8
+    assert result.source_diversity == 1.0

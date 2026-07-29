@@ -153,7 +153,8 @@ class RealReportWriter:
 
         registry = CitationRegistry(result.sources)
         prompt = self._generation_prompt(result, registry)
-        original = await self.language_model.generate(prompt)
+        generated = await self.language_model.generate(prompt)
+        original = self._with_canonical_references(generated, registry)
         validation = self.verifier.verify(original, result.sources, registry)
         if validation.valid:
             self.last_validation = validation
@@ -168,7 +169,8 @@ class RealReportWriter:
             f"Validation errors: {json.dumps(validation.errors, ensure_ascii=False)}\n"
             f"Original report:\n{original}"
         )
-        repaired = await self.language_model.generate(repair_prompt)
+        generated_repair = await self.language_model.generate(repair_prompt)
+        repaired = self._with_canonical_references(generated_repair, registry)
         repaired_validation = self.verifier.verify(repaired, result.sources, registry)
         if repaired_validation.valid:
             self.last_validation = repaired_validation
@@ -197,8 +199,9 @@ class RealReportWriter:
             "Write a Markdown research report answering the question. Use only the "
             "evidence and source registry below. Every factual claim must retain its "
             "source citation. Cite only the exact allowed [Sx] labels. Never invent a "
-            "citation, source, URL, or claim. Include the canonical References "
-            "section and these exact recommender-specific sections: "
+            "citation, source, URL, or claim. Do not write a References section; "
+            "the writer appends it deterministically from the source registry. "
+            "Include these exact recommender-specific sections: "
             "## 论文与代码对照, ## 数据集与指标, ## 复现难度分析, and "
             "## 三天复现建议. Do not state a GPU-memory number unless the supplied "
             "evidence explicitly states it; otherwise use unknown. Explain "
@@ -213,6 +216,14 @@ class RealReportWriter:
             f"Source registry: {json.dumps(sources, ensure_ascii=False)}\n"
             f"Canonical references:\n{registry.references_markdown()}"
         )
+
+    @staticmethod
+    def _with_canonical_references(report: str, registry: CitationRegistry) -> str:
+        """Replace any model-written References with the registry rendering."""
+
+        references_heading = re.search(r"(?im)^#{1,6}\s+References\s*$", report)
+        body = report[: references_heading.start()] if references_heading else report
+        return f"{body.rstrip()}\n\n{registry.references_markdown()}"
 
     @staticmethod
     def validate_citations(report: str, sources: list[SourceRecord]) -> None:

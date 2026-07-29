@@ -9,7 +9,7 @@ from rec_researcher.core.models import CitationValidation, SourceRecord
 from rec_researcher.reporting.citation import CitationRegistry
 
 _CITATION_RE = re.compile(r"\[(S\d+)\]")
-_REFERENCE_RE = re.compile(r"(?m)^\s*-\s*\[(S\d+)\]\s+.*?—\s*(\S+)\s*$")
+_REFERENCE_RE = re.compile(r"(?m)^\s*(?:-\s*)?\[(S\d+)\]\s+.*?—\s*(\S+)\s*$")
 _SECTION_RE = re.compile(r"(?m)^##\s+(.+?)\s*$")
 
 

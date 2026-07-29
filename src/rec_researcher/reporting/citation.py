@@ -56,7 +56,7 @@ class CitationRegistry:
 
         lines = ["## References", ""]
         lines.extend(
-            f"- [S{index}] {source.title} — {source.url}"
+            f"[S{index}] {source.title} — {source.url}"
             for index, source in enumerate(self._sources, start=1)
         )
         if not self._sources:

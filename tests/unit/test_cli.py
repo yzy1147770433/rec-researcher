@@ -1,10 +1,13 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
 from rec_researcher import __version__
 from rec_researcher.cli import app
+from rec_researcher.core.settings import Settings
 
 runner = CliRunner()
 
@@ -108,6 +111,62 @@ def test_run_real_fails_early_when_configuration_is_missing(
     assert result.exit_code == 2
     assert "Missing real-mode configuration" in result.output
     assert list(tmp_path.iterdir()) == []
+
+
+def test_run_real_applies_cli_timeout_to_provider_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[float] = []
+
+    def capture_settings(settings: Settings) -> None:
+        captured.append(settings.request_timeout_seconds)
+        raise ValueError("stop after settings capture")
+
+    monkeypatch.setattr(
+        "rec_researcher.cli.OpenAICompatibleLanguageModel", capture_settings
+    )
+    result = runner.invoke(
+        app,
+        ["run", "question", "--mode", "real", "--timeout", "600"],
+        env={
+            "REC_LLM_BASE_URL": "https://llm.invalid/v1",
+            "REC_LLM_API_KEY": "llm-secret",
+            "REC_LLM_MODEL": "model",
+            "REC_TAVILY_API_KEY": "tavily-secret",
+        },
+    )
+
+    assert result.exit_code == 2
+    assert captured == [600.0]
+
+
+def test_run_real_does_not_create_unused_milvus_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "nested" / "configured.db"
+
+    async def fake_run(_orchestrator: object, _question: str) -> object:
+        return SimpleNamespace(run_id="test-run")
+
+    monkeypatch.setattr(
+        "rec_researcher.cli.ResearchOrchestrator.run",
+        fake_run,
+    )
+    result = runner.invoke(
+        app,
+        ["run", "question", "--mode", "real", "--output-dir", str(tmp_path)],
+        env={
+            "REC_LLM_BASE_URL": "https://llm.invalid/v1",
+            "REC_LLM_API_KEY": "llm-secret",
+            "REC_LLM_MODEL": "model",
+            "REC_TAVILY_API_KEY": "tavily-secret",
+            "REC_MILVUS_URI": str(database),
+        },
+    )
+
+    assert result.exit_code == 0
+    assert not database.exists()
 
 
 def test_benchmark_mock_writes_summary(tmp_path: Path) -> None:
