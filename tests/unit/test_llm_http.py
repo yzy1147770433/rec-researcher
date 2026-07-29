@@ -18,7 +18,8 @@ def _settings() -> Settings:
     )
 
 
-async def test_retries_429_then_succeeds() -> None:
+@pytest.mark.parametrize("status", [429, 502, 503, 504])
+async def test_retries_transient_status_then_succeeds(status: int) -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -27,7 +28,7 @@ async def test_retries_429_then_succeeds() -> None:
         assert request.headers["Authorization"] == "Bearer test-secret"
         assert request.url.path == "/v1/chat/completions"
         if calls == 1:
-            return httpx.Response(429, text="slow down")
+            return httpx.Response(status, text="temporary")
         return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -38,13 +39,16 @@ async def test_retries_429_then_succeeds() -> None:
     assert calls == 2
 
 
-async def test_does_not_retry_401_and_does_not_expose_key() -> None:
+@pytest.mark.parametrize("status", [401, 403])
+async def test_does_not_retry_auth_errors_and_does_not_expose_key(
+    status: int,
+) -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(401, text="unauthorized")
+        return httpx.Response(status, text="echoed test-secret")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         model = OpenAICompatibleLanguageModel(_settings(), client=client)
@@ -52,8 +56,53 @@ async def test_does_not_retry_401_and_does_not_expose_key() -> None:
             await model.generate("question")
 
     assert calls == 1
-    assert "status 401" in str(caught.value)
+    assert f"status {status}" in str(caught.value)
     assert "test-secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://llm.invalid",
+        "https://llm.invalid/",
+        "https://llm.invalid/v1/",
+        "https://llm.invalid/v1/v1",
+    ],
+)
+async def test_normalizes_base_url_to_exactly_one_v1(base_url: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
+
+    settings = _settings().model_copy(update={"llm_base_url": base_url})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await OpenAICompatibleLanguageModel(settings, client=client).generate(
+            "question"
+        )
+
+    assert result == "done"
+
+
+@pytest.mark.parametrize("content", [None, ""])
+async def test_uses_reasoning_content_when_content_is_empty(
+    content: str | None,
+) -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": content, "reasoning_content": "answer"}}
+                ]
+            },
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await OpenAICompatibleLanguageModel(
+            _settings(), client=client
+        ).generate("question")
+
+    assert result == "answer"
 
 
 async def test_markdown_json_code_block_is_parsed() -> None:

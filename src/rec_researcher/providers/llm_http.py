@@ -31,6 +31,15 @@ def _configured(value: str | None, name: str) -> str:
     return value
 
 
+def _normalize_v1_base_url(value: str) -> str:
+    """Return an API base ending in exactly one ``/v1`` segment."""
+
+    normalized = value.rstrip("/")
+    while normalized.endswith("/v1"):
+        normalized = normalized[:-3].rstrip("/")
+    return f"{normalized}/v1"
+
+
 class OpenAICompatibleLanguageModel:
     """Call an OpenAI-compatible ``/chat/completions`` endpoint."""
 
@@ -42,7 +51,9 @@ class OpenAICompatibleLanguageModel:
     ) -> None:
         """Configure the endpoint from settings without exposing its secret."""
 
-        self.base_url = _configured(settings.llm_base_url, "llm_base_url").rstrip("/")
+        self.base_url = _normalize_v1_base_url(
+            _configured(settings.llm_base_url, "llm_base_url")
+        )
         self.model = _configured(settings.llm_model, "llm_model")
         secret = settings.llm_api_key
         if not isinstance(secret, SecretStr) or not secret.get_secret_value():
@@ -75,14 +86,21 @@ class OpenAICompatibleLanguageModel:
                 )
                 self._raise_for_status(response)
                 try:
-                    content = response.json()["choices"][0]["message"]["content"]
+                    message = response.json()["choices"][0]["message"]
                 except (KeyError, IndexError, TypeError, ValueError) as exc:
                     raise LanguageModelResponseError(
-                        "LLM response did not contain choices[0].message.content"
+                        "LLM response did not contain choices[0].message"
                     ) from exc
+                if not isinstance(message, dict):
+                    raise LanguageModelResponseError(
+                        "LLM response choices[0].message was not an object"
+                    )
+                content = message.get("content")
+                if content is None or content == "":
+                    content = message.get("reasoning_content")
                 if not isinstance(content, str):
                     raise LanguageModelResponseError(
-                        "LLM response content was not text"
+                        "LLM response content and reasoning_content were not text"
                     )
                 return content
         raise AssertionError("retry loop completed without a result")
@@ -107,11 +125,12 @@ class OpenAICompatibleLanguageModel:
                 f"{exc.lineno} column {exc.colno}"
             ) from exc
 
-    @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    def _raise_for_status(self, response: httpx.Response) -> None:
         if response.is_success:
             return
-        body = response.text[:_MAX_ERROR_BODY_LENGTH]
+        body = response.text[:_MAX_ERROR_BODY_LENGTH].replace(
+            self._api_key, "[REDACTED]"
+        )
         message = f"LLM request failed with status {response.status_code}: {body}"
         if response.status_code in _RETRYABLE_STATUS_CODES:
             raise _RetryableHTTPError(message)

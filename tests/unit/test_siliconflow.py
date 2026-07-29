@@ -49,6 +49,25 @@ async def test_embed_batch_restores_index_order_and_authorizes() -> None:
     assert result == [[1.0, 0.0], [0.0, 1.0]]
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://siliconflow.invalid",
+        "https://siliconflow.invalid/",
+        "https://siliconflow.invalid/v1/",
+        "https://siliconflow.invalid/v1/v1",
+    ],
+)
+async def test_normalizes_base_url_to_exactly_one_v1(base_url: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/embeddings"
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1]}]})
+
+    settings = _settings().model_copy(update={"siliconflow_base_url": base_url})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert await SiliconFlowEmbedder(settings, client=client).embed(["one"])
+
+
 async def test_embed_empty_input_and_blank_value_never_call_api() -> None:
     calls = 0
 
@@ -120,7 +139,7 @@ async def test_embed_does_not_retry_auth_errors_or_expose_key(status: int) -> No
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(status, text="denied")
+        return httpx.Response(status, text="echoed test-secret")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ProviderError) as caught:

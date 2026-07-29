@@ -16,6 +16,15 @@ _RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
 _MAX_ERROR_BODY_LENGTH = 500
 
 
+def _normalize_v1_base_url(value: str) -> str:
+    """Return an API base ending in exactly one ``/v1`` segment."""
+
+    normalized = value.rstrip("/")
+    while normalized.endswith("/v1"):
+        normalized = normalized[:-3].rstrip("/")
+    return f"{normalized}/v1"
+
+
 class _RetryableSiliconFlowError(ProviderError):
     """Mark a transient HTTP response as retryable."""
 
@@ -39,7 +48,7 @@ class _SiliconFlowClient:
         secret = settings.siliconflow_api_key
         if not isinstance(secret, SecretStr) or not secret.get_secret_value():
             raise ValueError("siliconflow_api_key must be configured")
-        self.base_url = settings.siliconflow_base_url.rstrip("/")
+        self.base_url = _normalize_v1_base_url(settings.siliconflow_base_url)
         self._api_key = secret.get_secret_value()
         self._client = client or httpx.AsyncClient()
         self._owns_client = client is None
@@ -64,13 +73,14 @@ class _SiliconFlowClient:
                 return response
         raise AssertionError("retry loop completed without a response")
 
-    @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    def _raise_for_status(self, response: httpx.Response) -> None:
         if response.is_success:
             return
+        body = response.text[:_MAX_ERROR_BODY_LENGTH].replace(
+            self._api_key, "[REDACTED]"
+        )
         message = (
-            f"SiliconFlow request failed with status {response.status_code}: "
-            f"{response.text[:_MAX_ERROR_BODY_LENGTH]}"
+            f"SiliconFlow request failed with status {response.status_code}: {body}"
         )
         if response.status_code in _RETRYABLE_STATUS_CODES:
             raise _RetryableSiliconFlowError(message)

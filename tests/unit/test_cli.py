@@ -31,6 +31,25 @@ def test_doctor_real_fails_when_configuration_is_missing() -> None:
     assert "Missing real-mode configuration" in result.output
 
 
+def test_doctor_real_only_checks_configuration_and_redacts_keys() -> None:
+    secret = "doctor-complete-secret"
+    result = runner.invoke(
+        app,
+        ["doctor", "--real"],
+        env={
+            "REC_LLM_BASE_URL": "https://llm.invalid/v1",
+            "REC_LLM_API_KEY": secret,
+            "REC_LLM_MODEL": "model",
+            "REC_TAVILY_API_KEY": "tavily-secret",
+        },
+    )
+
+    assert result.exit_code == 0
+    assert "Real-mode configuration: ok" in result.stdout
+    assert "Network checks: skipped" in result.stdout
+    assert secret not in result.output
+
+
 def test_run_mock_creates_output(tmp_path: Path) -> None:
     result = runner.invoke(
         app,

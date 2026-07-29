@@ -50,9 +50,9 @@ class TavilySearchProvider:
             timeout=self._timeout,
         )
         if not response.is_success:
+            body = response.text[:500].replace(self._api_key, "[REDACTED]")
             raise ProviderError(
-                f"Tavily request failed with status {response.status_code}: "
-                f"{response.text[:500]}"
+                f"Tavily request failed with status {response.status_code}: {body}"
             )
         payload = response.json()
         raw_results = payload.get("results", []) if isinstance(payload, dict) else []

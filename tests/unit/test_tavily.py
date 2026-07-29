@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from rec_researcher.core.exceptions import ProviderError
 from rec_researcher.core.settings import Settings
 from rec_researcher.providers.tavily import TavilySearchProvider
 
@@ -18,6 +19,9 @@ def _settings() -> Settings:
 async def test_duplicate_urls_are_removed() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = request.read()
+        assert request.method == "POST"
+        assert request.url.path == "/search"
+        assert request.headers["Authorization"] == "Bearer test-secret"
         assert b'"search_depth":"basic"' in payload
         assert b'"include_answer":false' in payload
         return httpx.Response(
@@ -62,3 +66,31 @@ async def test_empty_results_return_empty_list() -> None:
         )
 
     assert results == []
+
+
+async def test_trailing_slash_does_not_duplicate_search_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/search"
+        return httpx.Response(200, json={"results": []})
+
+    settings = _settings().model_copy(
+        update={"tavily_base_url": "https://tavily.invalid/"}
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert (
+            await TavilySearchProvider(settings, client=client).search("query", limit=1)
+            == []
+        )
+
+
+async def test_error_does_not_expose_api_key() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(403, text="echoed test-secret")
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(ProviderError) as caught:
+            await TavilySearchProvider(_settings(), client=client).search(
+                "query", limit=1
+            )
+
+    assert "test-secret" not in str(caught.value)
