@@ -6,6 +6,16 @@ from typing import Protocol
 from rec_researcher.core.models import PassageRecord, SourceRecord
 
 
+class VectorSearchResult(Protocol):
+    """Minimum result shape returned by a vector index."""
+
+    passage_id: str
+    source_id: str
+    text: str
+    score: float
+    rank: int
+
+
 class LanguageModel(Protocol):
     """Asynchronous text-generation capability."""
 
@@ -47,14 +57,14 @@ class PassageReranker(Protocol):
 class VectorIndex(Protocol):
     """Asynchronous vector storage and nearest-neighbor capability."""
 
-    async def add(
+    async def upsert_passages(
         self, passages: Sequence[PassageRecord], vectors: Sequence[Sequence[float]]
     ) -> None:
-        """Store passage/vector pairs."""
+        """Insert or replace passage/vector pairs."""
         ...
 
     async def search(
         self, vector: Sequence[float], *, limit: int
-    ) -> list[PassageRecord]:
-        """Return the nearest retained passages."""
+    ) -> list[VectorSearchResult]:
+        """Return scored nearest passages."""
         ...
