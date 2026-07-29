@@ -12,6 +12,10 @@ from rec_researcher.core.models import (
     SourceRecord,
     WorkState,
 )
+from rec_researcher.domain.recommender import (
+    RecommendationDomainAnalyzer,
+    RecommendationPaperProfile,
+)
 from rec_researcher.evidence.verifier import CitationVerifier
 from rec_researcher.providers.base import LanguageModel
 from rec_researcher.reporting.citation import CitationRegistry
@@ -30,6 +34,27 @@ class ReportWriter:
 
         registry = CitationRegistry(result.sources)
         citation = self._citation(registry)
+        profiles = self._profiles(result)
+        paper_lines = [
+            "- "
+            f"{profile.title}：{', '.join(profile.task_type) or '任务类型未知'}；"
+            f"代码：{', '.join(profile.code_urls) or '未确认公开代码'}。{citation}"
+            for profile in profiles
+        ]
+        dataset_lines = [
+            "- "
+            f"{profile.title}：数据集 {', '.join(profile.datasets) or 'unknown'}；"
+            f"指标 {', '.join(profile.metrics) or 'unknown'}。{citation}"
+            for profile in profiles
+        ]
+        difficulty_lines = [
+            "- "
+            f"{profile.title}：{profile.reproduction_difficulty.value} "
+            f"(score={profile.reproduction_score})；"
+            f"{'；'.join(profile.reproduction_score_reasons) or '未触发加减分规则'}。"
+            f"{citation}"
+            for profile in profiles
+        ]
         task_lines = [f"- {task.question}" for task in result.tasks]
         error_lines = [
             f"- {item.task_id}: {'; '.join(item.errors)}"
@@ -56,9 +81,23 @@ class ReportWriter:
                 "",
                 f"建议同时报告 Recall、NDCG、覆盖率，并固定数据划分。{citation}",
                 "",
-                "## 复现建议",
+                "## 论文与代码对照",
                 "",
-                f"记录数据版本、随机种子、负采样、超参数与运行环境。{citation}",
+                *(paper_lines or ["- 当前没有可分析的论文来源。"]),
+                "",
+                "## 数据集与指标",
+                "",
+                *(dataset_lines or ["- 当前证据未确认数据集与指标。"]),
+                "",
+                "## 复现难度分析",
+                "",
+                *(difficulty_lines or ["- 当前证据不足，无法进行规则评分。"]),
+                "",
+                "## 三天复现建议",
+                "",
+                "- 第一天：核对论文、代码、数据许可及评估口径。",
+                "- 第二天：运行最小基线，固定随机种子与配置。",
+                "- 第三天：复现主指标，记录差异、风险和未决证据。",
                 "",
                 "## 局限性",
                 "",
@@ -73,6 +112,17 @@ class ReportWriter:
             report, result.sources, registry
         )
         return report
+
+    @staticmethod
+    def _profiles(result: ResearchOutput) -> list[RecommendationPaperProfile]:
+        analyzer = RecommendationDomainAnalyzer()
+        return [
+            analyzer.analyze(
+                [source],
+                [item for item in result.evidence if item.source_id == source.id],
+            )
+            for source in result.sources
+        ]
 
     @staticmethod
     def _citation(registry: CitationRegistry) -> str:
@@ -152,7 +202,14 @@ class RealReportWriter:
             "evidence and source registry below. Every factual claim must retain its "
             "source citation. Cite only the exact allowed [Sx] labels. Never invent a "
             "citation, source, URL, or claim. Include the canonical References "
-            "section. "
+            "section and these exact recommender-specific sections: "
+            "## 论文与代码对照, ## 数据集与指标, ## 复现难度分析, and "
+            "## 三天复现建议. Do not state a GPU-memory number unless the supplied "
+            "evidence explicitly states it; otherwise use unknown. Explain "
+            "reproduction difficulty using only these score rules: no public code +2, "
+            "no public data "
+            "+2, LLM training +2, multi-GPU/distributed +2, single-GPU -1, complete "
+            "configuration and checkpoint -1. "
             "If evidence is insufficient, say so explicitly.\n\n"
             f"Question: {result.question}\n"
             f"Tasks: {json.dumps(tasks, ensure_ascii=False)}\n"

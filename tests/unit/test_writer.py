@@ -2,7 +2,7 @@ import pytest
 
 from rec_researcher.core.exceptions import ReportValidationError
 from rec_researcher.core.models import ResearchOutput, SourceRecord
-from rec_researcher.reporting.writer import RealReportWriter
+from rec_researcher.reporting.writer import RealReportWriter, ReportWriter
 
 
 class StubLanguageModel:
@@ -88,3 +88,25 @@ async def test_real_writer_repairs_once_and_preserves_failed_original(
 def test_real_writer_rejects_unknown_citation() -> None:
     with pytest.raises(ReportValidationError, match="unknown"):
         RealReportWriter.validate_citations("Claim [unknown].", [])
+
+
+def test_mock_writer_adds_recommender_specific_sections() -> None:
+    result = ResearchOutput(
+        question="question",
+        sources=[
+            SourceRecord(
+                id="source-1",
+                title="Two-tower study",
+                url="https://example.com/source",
+                snippet="Two-tower retrieval on MovieLens with Recall.",
+                provider="test",
+            )
+        ],
+    )
+
+    report = ReportWriter().write(result)
+
+    assert "## 论文与代码对照" in report
+    assert "## 数据集与指标" in report
+    assert "## 复现难度分析" in report
+    assert "## 三天复现建议" in report
