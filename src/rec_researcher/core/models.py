@@ -50,6 +50,8 @@ class PassageRecord(DomainModel):
     source_id: str
     text: str
     position: int = Field(default=0, ge=0)
+    start_offset: int = Field(default=0, ge=0)
+    end_offset: int = Field(default=0, ge=0)
 
 
 class EvidenceRecord(DomainModel):
