@@ -28,9 +28,7 @@ async def test_retries_429_then_succeeds() -> None:
         assert request.url.path == "/v1/chat/completions"
         if calls == 1:
             return httpx.Response(429, text="slow down")
-        return httpx.Response(
-            200, json={"choices": [{"message": {"content": "done"}}]}
-        )
+        return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         model = OpenAICompatibleLanguageModel(_settings(), client=client)

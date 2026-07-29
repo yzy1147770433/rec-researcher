@@ -52,9 +52,7 @@ class MilvusLiteIndex:
                 params = field.get("params", {})
                 dimension = params.get("dim")
                 return int(dimension) if dimension is not None else None
-        raise RuntimeError(
-            f"collection {self.collection_name!r} has no 'vector' field"
-        )
+        raise RuntimeError(f"collection {self.collection_name!r} has no 'vector' field")
 
     @staticmethod
     def _validate_vectors(vectors: Sequence[Sequence[float]]) -> int:

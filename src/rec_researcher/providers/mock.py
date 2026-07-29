@@ -116,10 +116,7 @@ class MockPassageReranker:
         ranked = sorted(
             scored,
             key=lambda pair: (
-                -len(
-                    query_tokens
-                    & set(re.findall(r"\w+", pair[1].text.casefold()))
-                ),
+                -len(query_tokens & set(re.findall(r"\w+", pair[1].text.casefold()))),
                 pair[0],
             ),
         )

@@ -9,9 +9,7 @@ from rec_researcher.core.models import CitationValidation, SourceRecord
 from rec_researcher.reporting.citation import CitationRegistry
 
 _CITATION_RE = re.compile(r"\[(S\d+)\]")
-_REFERENCE_RE = re.compile(
-    r"(?m)^\s*-\s*\[(S\d+)\]\s+.*?—\s*(\S+)\s*$"
-)
+_REFERENCE_RE = re.compile(r"(?m)^\s*-\s*\[(S\d+)\]\s+.*?—\s*(\S+)\s*$")
 _SECTION_RE = re.compile(r"(?m)^##\s+(.+?)\s*$")
 
 
@@ -100,8 +98,7 @@ class CitationVerifier:
         uncited_long = [
             item
             for item in factual
-            if len(item) >= self.long_paragraph_length
-            and not _CITATION_RE.search(item)
+            if len(item) >= self.long_paragraph_length and not _CITATION_RE.search(item)
         ]
         cited_known = set(body_citations) & known
         diversity = len(cited_known) / len(known) if known else 0.0

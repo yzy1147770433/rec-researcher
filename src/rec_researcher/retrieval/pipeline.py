@@ -98,9 +98,7 @@ class RetrievalPipeline:
             rrf_k=self._rrf_k,
         )
         candidates = [
-            by_id[item.passage_id]
-            for item in fused
-            if item.passage_id in by_id
+            by_id[item.passage_id] for item in fused if item.passage_id in by_id
         ]
         scores = {item.passage_id: item.score for item in fused}
         try:

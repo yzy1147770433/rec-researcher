@@ -67,8 +67,7 @@ def report_section_completeness(
     if not required_sections:
         return 1.0
     headings = {
-        match.group(1).strip()
-        for match in re.finditer(r"(?m)^##\s+(.+?)\s*$", report)
+        match.group(1).strip() for match in re.finditer(r"(?m)^##\s+(.+?)\s*$", report)
     }
     return sum(section in headings for section in required_sections) / len(
         required_sections

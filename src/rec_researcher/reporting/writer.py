@@ -169,9 +169,7 @@ class RealReportWriter:
             f"Original report:\n{original}"
         )
         repaired = await self.language_model.generate(repair_prompt)
-        repaired_validation = self.verifier.verify(
-            repaired, result.sources, registry
-        )
+        repaired_validation = self.verifier.verify(repaired, result.sources, registry)
         if repaired_validation.valid:
             self.last_validation = repaired_validation
             return repaired
@@ -183,9 +181,7 @@ class RealReportWriter:
         return original
 
     @staticmethod
-    def _generation_prompt(
-        result: ResearchOutput, registry: CitationRegistry
-    ) -> str:
+    def _generation_prompt(result: ResearchOutput, registry: CitationRegistry) -> str:
         sources = []
         for source in result.sources:
             item = source.model_dump(mode="json")

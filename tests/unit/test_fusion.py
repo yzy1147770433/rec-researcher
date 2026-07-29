@@ -11,12 +11,8 @@ def test_weighted_rrf_matches_hand_calculation_and_retains_ranks() -> None:
         BM25Result(passage_id="b", rank=2, score=8),
     ]
     vector = [
-        VectorSearchHit(
-            passage_id="b", source_id="s", text="b", rank=1, score=0.9
-        ),
-        VectorSearchHit(
-            passage_id="c", source_id="s", text="c", rank=2, score=0.8
-        ),
+        VectorSearchHit(passage_id="b", source_id="s", text="b", rank=1, score=0.9),
+        VectorSearchHit(passage_id="c", source_id="s", text="c", rank=2, score=0.8),
     ]
 
     results = weighted_reciprocal_rank_fusion(
@@ -36,8 +32,6 @@ def test_weighted_rrf_matches_hand_calculation_and_retains_ranks() -> None:
 
 def test_rrf_empty_inputs_are_safe() -> None:
     assert (
-        weighted_reciprocal_rank_fusion(
-            [], [], lexical_weight=1.0, vector_weight=1.0
-        )
+        weighted_reciprocal_rank_fusion([], [], lexical_weight=1.0, vector_weight=1.0)
         == []
     )

@@ -42,9 +42,9 @@ async def test_duplicate_urls_are_removed() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        results = await TavilySearchProvider(
-            _settings(), client=client
-        ).search("query", limit=5)
+        results = await TavilySearchProvider(_settings(), client=client).search(
+            "query", limit=5
+        )
 
     assert len(results) == 1
     assert results[0].title == "First"
@@ -57,8 +57,8 @@ async def test_empty_results_return_empty_list() -> None:
         lambda request: httpx.Response(200, json={"results": []})
     )
     async with httpx.AsyncClient(transport=transport) as client:
-        results = await TavilySearchProvider(
-            _settings(), client=client
-        ).search("query", limit=5)
+        results = await TavilySearchProvider(_settings(), client=client).search(
+            "query", limit=5
+        )
 
     assert results == []

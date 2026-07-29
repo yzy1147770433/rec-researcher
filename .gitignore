@@ -16,8 +16,9 @@ build/
 # Runtime outputs
 outputs/*
 !outputs/.gitkeep
-data/*.db
-data/*.sqlite
+*.db
+*.sqlite
+*.sqlite3
 data/*.jsonl
 logs/
 

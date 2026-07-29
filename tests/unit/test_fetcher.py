@@ -79,9 +79,7 @@ async def test_rejects_binary_and_oversized_content() -> None:
         return httpx.Response(200, content=b"x" * 11)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        fetcher = AsyncWebFetcher(
-            _settings(max_response_bytes=10), client=client
-        )
+        fetcher = AsyncWebFetcher(_settings(max_response_bytes=10), client=client)
         binary = await fetcher.fetch(_source("binary", "https://example.test/binary"))
         large = await fetcher.fetch(_source("large", "https://example.test/large"))
 
@@ -102,9 +100,9 @@ async def test_retries_timeout_then_succeeds() -> None:
         return httpx.Response(200, text="<p>recovered</p>")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await AsyncWebFetcher(
-            _settings(max_retries=1), client=client
-        ).fetch(_source("retry", "https://example.test/retry"))
+        result = await AsyncWebFetcher(_settings(max_retries=1), client=client).fetch(
+            _source("retry", "https://example.test/retry")
+        )
 
     assert result.success is True
     assert calls == 2

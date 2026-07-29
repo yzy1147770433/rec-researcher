@@ -255,8 +255,7 @@ class ResearchOrchestrator:
             output.validation = self.writer.last_validation
         except Exception as exc:  # noqa: BLE001 - preserve the run on writer failure
             warning = (
-                "report writer failed; used fallback: "
-                f"{type(exc).__name__}: {exc}"
+                f"report writer failed; used fallback: {type(exc).__name__}: {exc}"
             )
             output.limitations.append(warning)
             fallback = ReportWriter()
@@ -294,9 +293,7 @@ class ResearchOrchestrator:
             encoding="utf-8",
         )
         (temporary / "evidence.json").write_text(
-            self._json(
-                [item.model_dump(mode="json") for item in run.output.evidence]
-            ),
+            self._json([item.model_dump(mode="json") for item in run.output.evidence]),
             encoding="utf-8",
         )
         (temporary / "validation.json").write_text(

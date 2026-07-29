@@ -29,9 +29,7 @@ def benchmark(
     output_dir: Annotated[
         Path | None, typer.Option(help="Directory for benchmark artifacts.")
     ] = None,
-    max_concurrency: Annotated[
-        int, typer.Option("--max-concurrency", min=1)
-    ] = 3,
+    max_concurrency: Annotated[int, typer.Option("--max-concurrency", min=1)] = 3,
 ) -> None:
     """Run a failure-isolated lightweight benchmark."""
 
@@ -50,9 +48,7 @@ def benchmark(
     except (OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
-    typer.echo(
-        f"Cases: {summary.successful_cases}/{summary.total_cases} successful"
-    )
+    typer.echo(f"Cases: {summary.successful_cases}/{summary.total_cases} successful")
     typer.echo(f"Summary: {destination / 'summary.json'}")
 
 
@@ -101,8 +97,7 @@ def run(
                 max_sources=max_sources or settings.max_total_sources,
                 sources_per_query=settings.max_sources_per_query,
                 max_concurrency=max_concurrency or settings.max_concurrency,
-                retrieval_concurrency=retrieval_concurrency
-                or settings.max_concurrency,
+                retrieval_concurrency=retrieval_concurrency or settings.max_concurrency,
                 timeout=timeout or settings.request_timeout_seconds,
                 evidence_excerpt_length=settings.evidence_excerpt_length,
             )
@@ -113,8 +108,7 @@ def run(
                 max_sources=max_sources or settings.max_total_sources,
                 sources_per_query=settings.max_sources_per_query,
                 max_concurrency=max_concurrency or settings.max_concurrency,
-                retrieval_concurrency=retrieval_concurrency
-                or settings.max_concurrency,
+                retrieval_concurrency=retrieval_concurrency or settings.max_concurrency,
                 timeout=timeout or settings.request_timeout_seconds,
                 evidence_excerpt_length=settings.evidence_excerpt_length,
             )

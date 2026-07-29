@@ -154,8 +154,7 @@ class BenchmarkRunner:
             output = run.output
             retrieved = [source.id for source in output.sources]
             failed_tasks = sum(
-                result.state != WorkState.COMPLETED
-                for result in output.task_results
+                result.state != WorkState.COMPLETED for result in output.task_results
             )
             metrics = CaseMetrics(
                 task_success_rate=task_success_rate(output.task_results),
@@ -178,9 +177,7 @@ class BenchmarkRunner:
             failure_reason = None
             if not run_succeeded:
                 reasons = output.limitations or [
-                    error
-                    for result in output.task_results
-                    for error in result.errors
+                    error for result in output.task_results for error in result.errors
                 ]
                 failure_reason = "; ".join(reasons) or "research run failed"
             return BenchmarkCaseResult(
@@ -232,9 +229,7 @@ def summarize(results: Sequence[BenchmarkCaseResult]) -> BenchmarkSummary:
     )
     for name in ("recall_at_k", "mrr"):
         annotated = [
-            value
-            for item in metrics
-            if (value := getattr(item, name)) is not None
+            value for item in metrics if (value := getattr(item, name)) is not None
         ]
         means[name] = average_latency(annotated) if annotated else None
     successful = sum(result.success for result in results)
