@@ -18,6 +18,7 @@ from rec_researcher.retrieval.fusion import (
     FusedResult,
     weighted_reciprocal_rank_fusion,
 )
+from rec_researcher.retrieval.pipeline import RetrievalPipeline, RetrievalPipelineResult
 from rec_researcher.retrieval.vector_store import MilvusLiteIndex, VectorSearchHit
 
 __all__ = [
@@ -30,6 +31,8 @@ __all__ = [
     "MMRResult",
     "MilvusLiteIndex",
     "PassageChunker",
+    "RetrievalPipeline",
+    "RetrievalPipelineResult",
     "VectorSearchHit",
     "deduplicate_passages",
     "deduplicate_sources",

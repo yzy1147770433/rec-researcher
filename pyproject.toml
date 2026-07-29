@@ -39,7 +39,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers"
+addopts = "--strict-config --strict-markers -m 'not network'"
 testpaths = ["tests"]
 markers = [
     "network: tests that require network access and credentials",

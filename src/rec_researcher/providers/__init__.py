@@ -7,6 +7,11 @@ from rec_researcher.providers.mock import (
     MockSearchProvider,
     MockTextEmbedder,
 )
+from rec_researcher.providers.siliconflow import (
+    SiliconFlowEmbedder,
+    SiliconFlowReranker,
+    SiliconFlowRerankResult,
+)
 from rec_researcher.providers.tavily import TavilySearchProvider
 
 __all__ = [
@@ -15,5 +20,8 @@ __all__ = [
     "MockSearchProvider",
     "MockTextEmbedder",
     "OpenAICompatibleLanguageModel",
+    "SiliconFlowEmbedder",
+    "SiliconFlowReranker",
+    "SiliconFlowRerankResult",
     "TavilySearchProvider",
 ]
