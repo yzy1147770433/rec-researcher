@@ -5,6 +5,8 @@ import pytest
 from rec_researcher.core.models import PassageRecord
 from rec_researcher.retrieval.vector_store import MilvusLiteIndex
 
+pytestmark = pytest.mark.integration
+
 
 def _passage(identifier: str, source_id: str, text: str) -> PassageRecord:
     return PassageRecord(id=identifier, source_id=source_id, text=text)

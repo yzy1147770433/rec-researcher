@@ -1,12 +1,20 @@
 [project]
 name = "rec-researcher"
-version = "0.1.0"
+version = "0.1.1"
 description = "Offline-testable research workflow for recommender-system questions"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "yzy1147770433", email = "yzy1147770433@gmail.com" }
 ]
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "beautifulsoup4>=4.15.0",
     "httpx>=0.28.1",
@@ -25,6 +33,11 @@ dependencies = [
 [project.scripts]
 rec-researcher = "rec_researcher.cli:app"
 
+[project.urls]
+Homepage = "https://github.com/yzy1147770433/rec-researcher"
+Repository = "https://github.com/yzy1147770433/rec-researcher"
+Issues = "https://github.com/yzy1147770433/rec-researcher/issues"
+
 [build-system]
 requires = ["uv_build>=0.11.32,<0.12.0"]
 build-backend = "uv_build"
@@ -39,9 +52,10 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -m 'not network'"
+addopts = "--strict-config --strict-markers -m 'not network and not integration'"
 testpaths = ["tests"]
 markers = [
+    "integration: tests that require local external services or system capabilities",
     "network: tests that require network access and credentials",
 ]
 
