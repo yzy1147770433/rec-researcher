@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     llm_base_url: str | None = None
     llm_api_key: SecretStr | None = None
     llm_model: str | None = None
+    llm_max_tokens: int = Field(default=2048, ge=1)
     tavily_base_url: str = "https://api.tavily.com"
     tavily_api_key: SecretStr | None = None
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"

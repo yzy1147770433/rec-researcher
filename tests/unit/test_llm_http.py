@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -15,6 +17,7 @@ def _settings() -> Settings:
         llm_api_key="test-secret",
         llm_model="test-model",
         max_retries=2,
+        llm_max_tokens=321,
     )
 
 
@@ -27,6 +30,7 @@ async def test_retries_transient_status_then_succeeds(status: int) -> None:
         calls += 1
         assert request.headers["Authorization"] == "Bearer test-secret"
         assert request.url.path == "/v1/chat/completions"
+        assert json.loads(request.content)["max_tokens"] == 321
         if calls == 1:
             return httpx.Response(status, text="temporary")
         return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})

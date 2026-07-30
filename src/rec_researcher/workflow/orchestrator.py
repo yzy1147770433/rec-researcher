@@ -79,6 +79,7 @@ class ResearchOrchestrator:
         passage_chunker: PassageChunker | None = None,
         min_fetched_content_length: int = 50,
         retrieval_pipeline: RetrievalPipeline | None = None,
+        final_passage_limit: int | None = None,
     ) -> None:
         """Configure providers and independent workflow/retrieval limits."""
 
@@ -120,6 +121,8 @@ class ResearchOrchestrator:
             raise ValueError("min_fetched_content_length must be at least 1")
         if timeout <= 0:
             raise ValueError("timeout must be positive")
+        if final_passage_limit is not None and final_passage_limit < 1:
+            raise ValueError("final_passage_limit must be at least 1")
         self.output_dir = output_dir
         self.planner = planner or ResearchPlanner()
         self.search_provider = search_provider or MockSearchProvider()
@@ -137,6 +140,7 @@ class ResearchOrchestrator:
         self.passage_chunker = passage_chunker
         self.min_fetched_content_length = min_fetched_content_length
         self.retrieval_pipeline = retrieval_pipeline
+        self.final_passage_limit = final_passage_limit
         self.evidence_builder = EvidenceBuilder(
             max_excerpt_length=evidence_excerpt_length
         )
@@ -509,6 +513,15 @@ class ResearchOrchestrator:
         budget.embedding_calls += totals.embedding_calls
         budget.embedding_text_count += totals.embedding_text_count
         budget.reranker_calls += totals.reranker_calls
+        if self.final_passage_limit is not None:
+            selected = selected[: self.final_passage_limit]
+            selected_ids = {passage.id for passage in selected}
+            traces = {
+                passage_id: trace
+                for passage_id, trace in traces.items()
+                if passage_id in selected_ids
+            }
+            totals.final_passage_count = len(selected)
         return selected, traces, totals
 
     async def _write_report(self, output: ResearchOutput) -> None:
