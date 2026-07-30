@@ -6,11 +6,12 @@ from collections.abc import Sequence
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import SecretStr
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
 from rec_researcher.core.exceptions import ProviderError
 from rec_researcher.core.settings import Settings
+from rec_researcher.providers.base import RerankResult
 
 _RETRYABLE_STATUS_CODES = frozenset({429, 502, 503, 504})
 _MAX_ERROR_BODY_LENGTH = 500
@@ -29,14 +30,7 @@ class _RetryableSiliconFlowError(ProviderError):
     """Mark a transient HTTP response as retryable."""
 
 
-class SiliconFlowRerankResult(BaseModel):
-    """A reranked document tied back to its original input position."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    index: int
-    document: str
-    relevance_score: float
+SiliconFlowRerankResult = RerankResult
 
 
 class _SiliconFlowClient:

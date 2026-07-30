@@ -7,7 +7,6 @@ from typer.testing import CliRunner
 
 from rec_researcher import __version__
 from rec_researcher.cli import app
-from rec_researcher.core.settings import Settings
 
 runner = CliRunner()
 
@@ -113,17 +112,48 @@ def test_run_real_fails_early_when_configuration_is_missing(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_run_real_hybrid_fails_early_without_siliconflow(tmp_path: Path) -> None:
+    secret = "cli-factory-complete-secret"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "question",
+            "--mode",
+            "real",
+            "--retrieval-mode",
+            "hybrid",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        env={
+            "REC_LLM_BASE_URL": "https://llm.invalid/v1",
+            "REC_LLM_API_KEY": secret,
+            "REC_LLM_MODEL": "model",
+            "REC_TAVILY_API_KEY": "tavily-secret",
+            "REC_SILICONFLOW_API_KEY": "",
+            "REC_EMBEDDING_MODEL": "",
+            "REC_RERANKER_MODEL": "",
+        },
+    )
+
+    assert result.exit_code == 2
+    assert "siliconflow_api_key" in result.output
+    assert secret not in result.output
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_run_real_applies_cli_timeout_to_provider_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[float] = []
 
-    def capture_settings(settings: Settings) -> None:
-        captured.append(settings.request_timeout_seconds)
+    def capture_settings(factory: object) -> None:
+        captured.append(factory.settings.request_timeout_seconds)  # type: ignore[attr-defined]
         raise ValueError("stop after settings capture")
 
     monkeypatch.setattr(
-        "rec_researcher.cli.OpenAICompatibleLanguageModel", capture_settings
+        "rec_researcher.cli.ProviderFactory.create_language_model", capture_settings
     )
     result = runner.invoke(
         app,
@@ -138,6 +168,19 @@ def test_run_real_applies_cli_timeout_to_provider_settings(
 
     assert result.exit_code == 2
     assert captured == [600.0]
+
+
+def test_run_help_lists_retrieval_provider_options() -> None:
+    result = runner.invoke(app, ["run", "--help"])
+
+    assert result.exit_code == 0
+    for option in (
+        "--retrieval-mode",
+        "--embedding-provider",
+        "--reranker-provider",
+        "--vector-store",
+    ):
+        assert option in result.stdout
 
 
 def test_run_real_does_not_create_unused_milvus_database(

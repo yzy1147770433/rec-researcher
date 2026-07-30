@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from rec_researcher.core.models import PassageRecord
-from rec_researcher.providers.base import TextEmbedder, VectorIndex
-from rec_researcher.providers.siliconflow import SiliconFlowRerankResult
+from rec_researcher.providers.base import PassageReranker, TextEmbedder, VectorIndex
 from rec_researcher.retrieval.bm25 import BM25Retriever
 from rec_researcher.retrieval.diversity import (
     DiversityCandidate,
@@ -17,16 +15,6 @@ from rec_researcher.retrieval.diversity import (
     maximal_marginal_relevance,
 )
 from rec_researcher.retrieval.fusion import weighted_reciprocal_rank_fusion
-
-
-class DocumentReranker(Protocol):
-    """Rerank plain documents and retain their input positions."""
-
-    async def rerank(
-        self, query: str, documents: Sequence[str], *, top_n: int
-    ) -> list[SiliconFlowRerankResult]:
-        """Return provider-ranked documents."""
-        ...
 
 
 class RetrievalPipelineResult(BaseModel):
@@ -46,7 +34,7 @@ class RetrievalPipeline:
         *,
         embedder: TextEmbedder,
         vector_index: VectorIndex,
-        reranker: DocumentReranker,
+        reranker: PassageReranker,
         retrieval_top_k: int = 20,
         rerank_top_k: int = 10,
         mmr_top_k: int = 8,

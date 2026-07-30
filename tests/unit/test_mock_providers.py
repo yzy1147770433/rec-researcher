@@ -1,6 +1,5 @@
 import pytest
 
-from rec_researcher.core.models import PassageRecord
 from rec_researcher.providers.mock import (
     MockLanguageModel,
     MockPassageReranker,
@@ -29,13 +28,10 @@ async def test_mock_providers_are_deterministic_and_offline() -> None:
 
 async def test_mock_reranker_handles_empty_and_stable_order() -> None:
     reranker = MockPassageReranker()
-    passages = [
-        PassageRecord(id="p1", source_id="S1", text="unrelated"),
-        PassageRecord(id="p2", source_id="S2", text="ranking metrics"),
-    ]
+    documents = ["unrelated", "ranking metrics"]
 
-    assert await reranker.rerank("metrics", [], limit=2) == []
-    assert await reranker.rerank("metrics", passages, limit=2) == [
-        passages[1],
-        passages[0],
-    ]
+    assert await reranker.rerank("metrics", [], top_n=2) == []
+    results = await reranker.rerank("metrics", documents, top_n=2)
+
+    assert [result.index for result in results] == [1, 0]
+    assert [result.document for result in results] == [documents[1], documents[0]]
