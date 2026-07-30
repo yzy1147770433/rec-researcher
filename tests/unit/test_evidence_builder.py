@@ -31,6 +31,11 @@ def test_builds_bounded_traceable_evidence() -> None:
         "claim_hint": "claim",
         "excerpt": "abcde",
         "relevance_score": 0.75,
+        "lexical_rank": None,
+        "dense_rank": None,
+        "rrf_score": None,
+        "rerank_score": None,
+        "selection_stage": "snippet",
     }
 
 

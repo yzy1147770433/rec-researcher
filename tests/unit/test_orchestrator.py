@@ -7,7 +7,7 @@ import pytest
 
 from rec_researcher.core.models import InquiryTask, SourceRecord, WorkState
 from rec_researcher.core.settings import Settings
-from rec_researcher.providers.mock import MockSearchProvider
+from rec_researcher.providers.mock import MockSearchProvider, MockWebFetcher
 from rec_researcher.retrieval.chunker import PassageChunker
 from rec_researcher.retrieval.fetcher import FetchResult
 from rec_researcher.workflow.orchestrator import ResearchOrchestrator
@@ -34,6 +34,18 @@ class AlwaysFailingSearchProvider:
 class OneTaskPlanner:
     async def create_tasks(self, question: str) -> list[InquiryTask]:
         return [InquiryTask(id="task-1", question=question, search_queries=[question])]
+
+
+class TwoTaskPlanner:
+    async def create_tasks(self, question: str) -> list[InquiryTask]:
+        return [
+            InquiryTask(
+                id="task-a", question=f"{question} A", search_queries=[question]
+            ),
+            InquiryTask(
+                id="task-b", question=f"{question} B", search_queries=[question]
+            ),
+        ]
 
 
 class StaticSearchProvider:
@@ -180,6 +192,7 @@ async def test_hybrid_fetches_concurrently_and_isolates_failure(tmp_path: Path) 
     assert run.output.statistics.fetch_successes == 1
     assert run.output.statistics.fetch_failures == 1
     assert run.output.statistics.fallback_passages == 1
+    assert run.output.statistics.degradation_events == 1
     assert {passage.content_origin for passage in run.output.passages} == {
         "fetched",
         "search_snippet_fallback",
@@ -229,7 +242,7 @@ async def test_hybrid_outputs_multiple_source_linked_chunks(tmp_path: Path) -> N
 
     assert len(run.output.passages) > 1
     assert all(passage.source_id == source.id for passage in run.output.passages)
-    assert [passage.chunk_index for passage in run.output.passages] == list(
+    assert sorted(passage.chunk_index for passage in run.output.passages) == list(
         range(len(run.output.passages))
     )
 
@@ -245,3 +258,77 @@ async def test_snippet_mode_keeps_one_passage_per_source(tmp_path: Path) -> None
 
     assert [passage.text for passage in run.output.passages] == ["original snippet"]
     assert run.output.statistics.fetch_attempts == 0
+
+
+async def test_hybrid_isolates_task_and_run_passage_ids(tmp_path: Path) -> None:
+    source = _source("shared", "https://example.test/shared", "shared useful text")
+    orchestrator = ResearchOrchestrator(
+        output_dir=tmp_path,
+        planner=TwoTaskPlanner(),  # type: ignore[arg-type]
+        search_provider=StaticSearchProvider([source]),
+        retrieval_mode="hybrid",
+        web_fetcher=RecordingFetcher(
+            {"shared": (True, "A sufficiently long shared fetched document body.")}
+        ),
+        passage_chunker=PassageChunker(
+            Settings(_env_file=None, chunk_size=100, chunk_overlap=0)
+        ),
+        min_fetched_content_length=10,
+    )
+
+    first = await orchestrator.run("question")
+    second = await orchestrator.run("question")
+    first_ids = {passage.id for passage in first.output.passages}
+    second_ids = {passage.id for passage in second.output.passages}
+
+    assert len(first_ids) == 2
+    assert any(":task-a:" in identifier for identifier in first_ids)
+    assert any(":task-b:" in identifier for identifier in first_ids)
+    assert first_ids.isdisjoint(second_ids)
+
+
+async def test_hybrid_run_json_contains_retrieval_statistics(tmp_path: Path) -> None:
+    default_database = Path("data/rec_researcher.db")
+    database_state = (
+        (default_database.stat().st_size, default_database.stat().st_mtime_ns)
+        if default_database.exists()
+        else None
+    )
+    orchestrator = ResearchOrchestrator(
+        output_dir=tmp_path,
+        planner=OneTaskPlanner(),  # type: ignore[arg-type]
+        search_provider=MockSearchProvider(),
+        retrieval_mode="hybrid",
+        web_fetcher=MockWebFetcher(),
+        passage_chunker=PassageChunker(Settings(_env_file=None)),
+    )
+
+    run = await orchestrator.run("vector recommendation")
+    persisted = json.loads((tmp_path / run.run_id / "run.json").read_text())
+    statistics = persisted["output"]["statistics"]
+    expected = {
+        "bm25_candidate_count",
+        "dense_candidate_count",
+        "fused_candidate_count",
+        "reranked_candidate_count",
+        "final_passage_count",
+        "embedding_calls",
+        "embedding_text_count",
+        "reranker_calls",
+        "degradation_events",
+        "retrieval_latency_ms",
+        "fetch_latency_ms",
+        "embedding_latency_ms",
+        "rerank_latency_ms",
+    }
+
+    assert expected <= statistics.keys()
+    assert statistics["embedding_calls"] == 2
+    assert statistics["reranker_calls"] == 1
+    assert all(item.selection_stage == "mmr" for item in run.output.evidence)
+    current_database_state = (
+        (default_database.stat().st_size, default_database.stat().st_mtime_ns)
+        if default_database.exists()
+        else None
+    )
+    assert current_database_state == database_state

@@ -156,8 +156,12 @@ class ProviderFactory:
             collection_name=self.settings.milvus_collection,
         )
 
-    def create_retrieval_pipeline(self) -> RetrievalPipeline | None:
+    def create_retrieval_pipeline(
+        self, *, run_namespace: str | None = None
+    ) -> RetrievalPipeline | None:
         """Create hybrid retrieval, while snippet mode returns no pipeline."""
+
+        del run_namespace  # Per-run/task scoping occurs when retrieval is invoked.
 
         if self.selection.retrieval_mode == "snippet":
             return None

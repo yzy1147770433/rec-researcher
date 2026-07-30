@@ -1,12 +1,12 @@
 """Provider interfaces and implementations."""
 
-from rec_researcher.providers.factory import ProviderFactory, ProviderSelection
 from rec_researcher.providers.llm_http import OpenAICompatibleLanguageModel
 from rec_researcher.providers.mock import (
     MockLanguageModel,
     MockPassageReranker,
     MockSearchProvider,
     MockTextEmbedder,
+    MockWebFetcher,
 )
 from rec_researcher.providers.siliconflow import (
     SiliconFlowEmbedder,
@@ -20,6 +20,7 @@ __all__ = [
     "MockPassageReranker",
     "MockSearchProvider",
     "MockTextEmbedder",
+    "MockWebFetcher",
     "OpenAICompatibleLanguageModel",
     "ProviderFactory",
     "ProviderSelection",
@@ -28,3 +29,19 @@ __all__ = [
     "SiliconFlowRerankResult",
     "TavilySearchProvider",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Load factory exports lazily to avoid retrieval/provider import cycles."""
+
+    if name in {"ProviderFactory", "ProviderSelection"}:
+        from rec_researcher.providers.factory import (
+            ProviderFactory,
+            ProviderSelection,
+        )
+
+        return {
+            "ProviderFactory": ProviderFactory,
+            "ProviderSelection": ProviderSelection,
+        }[name]
+    raise AttributeError(name)

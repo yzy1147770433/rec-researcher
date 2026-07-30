@@ -77,6 +77,29 @@ def test_run_mock_creates_output(tmp_path: Path) -> None:
     assert "Run ID:" in result.stdout
 
 
+def test_run_mock_hybrid_is_completely_offline(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "hybrid recommendation",
+            "--mode",
+            "mock",
+            "--retrieval-mode",
+            "hybrid",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    run_directories = list(tmp_path.iterdir())
+    assert len(run_directories) == 1
+    payload = json.loads((run_directories[0] / "run.json").read_text())
+    assert payload["output"]["statistics"]["embedding_calls"] > 0
+    assert not (tmp_path / "data" / "rec_researcher.db").exists()
+
+
 def test_run_rejects_empty_question() -> None:
     result = runner.invoke(app, ["run", " ", "--mode", "mock"])
 
@@ -112,7 +135,7 @@ def test_run_real_fails_early_when_configuration_is_missing(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_run_real_hybrid_does_not_require_siliconflow(
+def test_run_real_hybrid_requires_configured_non_mock_retrieval(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def fake_run(_orchestrator: object, _question: str) -> object:
@@ -142,8 +165,8 @@ def test_run_real_hybrid_does_not_require_siliconflow(
         },
     )
 
-    assert result.exit_code == 0
-    assert "Run ID: hybrid-run" in result.output
+    assert result.exit_code == 2
+    assert "embedding_model" in result.output
 
 
 def test_run_real_applies_cli_timeout_to_provider_settings(
