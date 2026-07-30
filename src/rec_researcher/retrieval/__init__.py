@@ -19,7 +19,11 @@ from rec_researcher.retrieval.fusion import (
     weighted_reciprocal_rank_fusion,
 )
 from rec_researcher.retrieval.pipeline import RetrievalPipeline, RetrievalPipelineResult
-from rec_researcher.retrieval.vector_store import MilvusLiteIndex, VectorSearchHit
+from rec_researcher.retrieval.vector_store import (
+    InMemoryVectorIndex,
+    MilvusLiteIndex,
+    VectorSearchHit,
+)
 
 __all__ = [
     "AsyncWebFetcher",
@@ -30,6 +34,7 @@ __all__ = [
     "FusedResult",
     "MMRResult",
     "MilvusLiteIndex",
+    "InMemoryVectorIndex",
     "PassageChunker",
     "RetrievalPipeline",
     "RetrievalPipelineResult",

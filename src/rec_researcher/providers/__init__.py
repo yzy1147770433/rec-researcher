@@ -1,5 +1,6 @@
 """Provider interfaces and implementations."""
 
+from rec_researcher.providers.factory import ProviderFactory, ProviderSelection
 from rec_researcher.providers.llm_http import OpenAICompatibleLanguageModel
 from rec_researcher.providers.mock import (
     MockLanguageModel,
@@ -20,6 +21,8 @@ __all__ = [
     "MockSearchProvider",
     "MockTextEmbedder",
     "OpenAICompatibleLanguageModel",
+    "ProviderFactory",
+    "ProviderSelection",
     "SiliconFlowEmbedder",
     "SiliconFlowReranker",
     "SiliconFlowRerankResult",

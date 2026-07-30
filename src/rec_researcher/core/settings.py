@@ -6,6 +6,11 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+EmbeddingProvider = Literal["mock", "siliconflow", "none"]
+RerankerProvider = Literal["mock", "siliconflow", "none"]
+VectorStore = Literal["memory", "milvus", "none"]
+RetrievalMode = Literal["snippet", "hybrid"]
+
 
 def _is_configured(value: object) -> bool:
     """Check presence while keeping secret values inside ``SecretStr``."""
@@ -36,6 +41,10 @@ class Settings(BaseSettings):
     max_sources_per_query: int = Field(default=5, ge=1)
     max_total_sources: int = Field(default=30, ge=1)
     max_tasks: int = Field(default=5, ge=1)
+    embedding_provider: EmbeddingProvider = "siliconflow"
+    reranker_provider: RerankerProvider = "siliconflow"
+    vector_store: VectorStore = "milvus"
+    retrieval_mode: RetrievalMode = "snippet"
 
     llm_base_url: str | None = None
     llm_api_key: SecretStr | None = None

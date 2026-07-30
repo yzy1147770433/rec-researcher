@@ -9,11 +9,16 @@ import typer
 
 from rec_researcher import __version__
 from rec_researcher.core.exceptions import RecResearcherError
-from rec_researcher.core.settings import Settings
+from rec_researcher.core.settings import (
+    EmbeddingProvider,
+    RerankerProvider,
+    RetrievalMode,
+    Settings,
+    VectorStore,
+)
 from rec_researcher.evaluation.runner import BenchmarkRunner
 from rec_researcher.planning.planner import ResearchPlanner
-from rec_researcher.providers.llm_http import OpenAICompatibleLanguageModel
-from rec_researcher.providers.tavily import TavilySearchProvider
+from rec_researcher.providers.factory import ProviderFactory
 from rec_researcher.reporting.writer import RealReportWriter
 from rec_researcher.workflow.orchestrator import ResearchOrchestrator
 
@@ -72,26 +77,42 @@ def run(
     ] = None,
     timeout: Annotated[float | None, typer.Option("--timeout", min=0.001)] = None,
     max_sources: Annotated[int | None, typer.Option("--max-sources", min=1)] = None,
+    retrieval_mode: Annotated[
+        RetrievalMode, typer.Option("--retrieval-mode", help="Retrieval strategy.")
+    ] = "snippet",
+    embedding_provider: Annotated[
+        EmbeddingProvider,
+        typer.Option("--embedding-provider", help="Embedding provider."),
+    ] = "siliconflow",
+    reranker_provider: Annotated[
+        RerankerProvider,
+        typer.Option("--reranker-provider", help="Reranking provider."),
+    ] = "siliconflow",
+    vector_store: Annotated[
+        VectorStore, typer.Option("--vector-store", help="Vector index backend.")
+    ] = "milvus",
 ) -> None:
     """Run the research workflow."""
 
     settings = Settings()
     try:
         if mode == "real":
-            missing = settings.missing_real_configuration(
-                search_provider=search_provider
-            )
-            if missing:
-                raise ValueError(
-                    "Missing real-mode configuration: " + ", ".join(missing)
-                )
             provider_settings = (
                 settings.model_copy(update={"request_timeout_seconds": timeout})
                 if timeout is not None
                 else settings
             )
-            llm = OpenAICompatibleLanguageModel(provider_settings)
-            search = TavilySearchProvider(provider_settings)
+            factory = ProviderFactory(
+                provider_settings,
+                mode=mode,
+                retrieval_mode=retrieval_mode,
+                embedding_provider=embedding_provider,
+                reranker_provider=reranker_provider,
+                vector_store=vector_store,
+            )
+            factory.validate_configuration()
+            llm = factory.create_language_model()
+            search = factory.create_search_provider()
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
                 planner=ResearchPlanner(llm),
