@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,12 @@ class InMemoryVectorIndex:
             )
             for rank, (score, passage) in enumerate(scored[:limit], start=1)
         ]
+
+    def scoped(self, namespace: str) -> InMemoryVectorIndex:
+        """Return a fresh process-local namespace."""
+
+        del namespace
+        return InMemoryVectorIndex()
 
 
 class MilvusLiteIndex:
@@ -248,3 +255,11 @@ class MilvusLiteIndex:
         """Release the underlying local database connection."""
 
         self._client.close()
+
+    def scoped(self, namespace: str) -> MilvusLiteIndex:
+        """Return a client using a namespace-specific collection."""
+
+        suffix = re.sub(r"[^A-Za-z0-9_]", "_", namespace)[:96]
+        return MilvusLiteIndex(
+            self.uri, collection_name=f"{self.collection_name}_{suffix}"
+        )

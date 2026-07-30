@@ -80,3 +80,7 @@ class VectorIndex(Protocol):
     ) -> list[VectorSearchResult]:
         """Return scored nearest passages."""
         ...
+
+    def scoped(self, namespace: str) -> "VectorIndex":
+        """Return an index isolated to one run/task namespace."""
+        ...

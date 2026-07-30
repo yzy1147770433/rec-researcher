@@ -79,7 +79,12 @@ class EvidenceRecord(DomainModel):
     passage_id: str
     claim_hint: str
     excerpt: str
-    relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    relevance_score: float = 0.0
+    lexical_rank: int | None = Field(default=None, ge=1)
+    dense_rank: int | None = Field(default=None, ge=1)
+    rrf_score: float | None = Field(default=None, ge=0.0)
+    rerank_score: float | None = None
+    selection_stage: str = "snippet"
 
 
 class CitationValidation(DomainModel):
@@ -123,6 +128,19 @@ class RunStatistics(DomainModel):
     fallback_passages: int = Field(default=0, ge=0)
     raw_passage_count: int = Field(default=0, ge=0)
     deduplicated_passage_count: int = Field(default=0, ge=0)
+    bm25_candidate_count: int = Field(default=0, ge=0)
+    dense_candidate_count: int = Field(default=0, ge=0)
+    fused_candidate_count: int = Field(default=0, ge=0)
+    reranked_candidate_count: int = Field(default=0, ge=0)
+    final_passage_count: int = Field(default=0, ge=0)
+    embedding_calls: int = Field(default=0, ge=0)
+    embedding_text_count: int = Field(default=0, ge=0)
+    reranker_calls: int = Field(default=0, ge=0)
+    degradation_events: int = Field(default=0, ge=0)
+    retrieval_latency_ms: float = Field(default=0.0, ge=0.0)
+    fetch_latency_ms: float = Field(default=0.0, ge=0.0)
+    embedding_latency_ms: float = Field(default=0.0, ge=0.0)
+    rerank_latency_ms: float = Field(default=0.0, ge=0.0)
 
 
 class ResearchOutput(DomainModel):
@@ -159,6 +177,8 @@ class RunBudgetRecord(DomainModel):
     fallback_passages: int = Field(default=0, ge=0)
     raw_passage_count: int = Field(default=0, ge=0)
     deduplicated_passage_count: int = Field(default=0, ge=0)
+    embedding_text_count: int = Field(default=0, ge=0)
+    degradation_events: int = Field(default=0, ge=0)
     warnings: list[str] = Field(default_factory=list)
     failed_tasks: list[str] = Field(default_factory=list)
 

@@ -19,6 +19,7 @@ from rec_researcher.core.settings import (
 from rec_researcher.evaluation.runner import BenchmarkRunner
 from rec_researcher.planning.planner import ResearchPlanner
 from rec_researcher.providers.factory import ProviderFactory
+from rec_researcher.providers.mock import MockWebFetcher
 from rec_researcher.reporting.writer import RealReportWriter
 from rec_researcher.retrieval.chunker import PassageChunker
 from rec_researcher.retrieval.fetcher import AsyncWebFetcher
@@ -146,6 +147,7 @@ def run(
                     if retrieval_mode == "hybrid"
                     else None
                 ),
+                retrieval_pipeline=factory.create_retrieval_pipeline(),
             )
 
             async def run_real() -> object:
@@ -157,6 +159,10 @@ def run(
 
             result = asyncio.run(run_real())
         else:
+            factory = ProviderFactory(
+                settings, mode="mock", retrieval_mode=retrieval_mode
+            )
+            fetcher = MockWebFetcher() if retrieval_mode == "hybrid" else None
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
                 max_tasks=settings.max_tasks,
@@ -167,6 +173,12 @@ def run(
                 fetch_concurrency=fetch_concurrency or settings.fetch_concurrency,
                 timeout=timeout or settings.request_timeout_seconds,
                 evidence_excerpt_length=settings.evidence_excerpt_length,
+                retrieval_mode=retrieval_mode,
+                web_fetcher=fetcher,
+                passage_chunker=(
+                    PassageChunker(settings) if retrieval_mode == "hybrid" else None
+                ),
+                retrieval_pipeline=factory.create_retrieval_pipeline(),
             )
             result = asyncio.run(orchestrator.run(question))
     except (ValueError, RecResearcherError) as exc:

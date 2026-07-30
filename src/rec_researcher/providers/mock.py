@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 from rec_researcher.core.models import SourceRecord
 from rec_researcher.providers.base import RerankResult
+from rec_researcher.retrieval.fetcher import FetchResult
 
 
 class MockLanguageModel:
@@ -71,6 +72,21 @@ class MockSearchProvider:
             )
             for source_id, title, url, snippet in self._SOURCES[:limit]
         ]
+
+
+class MockWebFetcher:
+    """Turn fictional search metadata into deterministic offline page text."""
+
+    async def fetch(self, source: SourceRecord) -> FetchResult:
+        """Return a stable successful fetch without network or filesystem access."""
+
+        text = f"{source.title}. {source.snippet} {source.snippet}"
+        return FetchResult(
+            source_id=source.id,
+            url=str(source.url),
+            success=True,
+            text=text,
+        )
 
 
 class MockTextEmbedder:

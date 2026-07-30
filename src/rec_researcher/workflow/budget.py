@@ -30,6 +30,8 @@ class RunBudget:
     fallback_passages: int = 0
     raw_passage_count: int = 0
     deduplicated_passage_count: int = 0
+    embedding_text_count: int = 0
+    degradation_events: int = 0
     warnings: list[str] = field(default_factory=list)
     failed_tasks: list[str] = field(default_factory=list)
     task_count: int = 0
@@ -125,6 +127,12 @@ class RunBudget:
 
         if warning and warning not in self.warnings:
             self.warnings.append(warning)
+
+    def record_degradation(self, warning: str) -> None:
+        """Record one explicitly surfaced retrieval degradation."""
+
+        self.degradation_events += 1
+        self.add_warning(warning)
 
     @staticmethod
     def _validate_count(count: int) -> None:

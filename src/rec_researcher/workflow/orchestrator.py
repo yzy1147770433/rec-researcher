@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import os
 import tempfile
+import time
 import uuid
 from collections.abc import Awaitable
 from pathlib import Path
@@ -25,7 +26,11 @@ from rec_researcher.core.models import (
 from rec_researcher.evidence.builder import EvidenceBuilder
 from rec_researcher.planning.planner import ResearchPlanner
 from rec_researcher.providers.base import SearchProvider
-from rec_researcher.providers.mock import MockSearchProvider
+from rec_researcher.providers.mock import (
+    MockPassageReranker,
+    MockSearchProvider,
+    MockTextEmbedder,
+)
 from rec_researcher.reporting.writer import RealReportWriter, ReportWriter
 from rec_researcher.retrieval.chunker import PassageChunker
 from rec_researcher.retrieval.dedup import (
@@ -33,6 +38,12 @@ from rec_researcher.retrieval.dedup import (
     normalize_url,
 )
 from rec_researcher.retrieval.fetcher import FetchResult
+from rec_researcher.retrieval.pipeline import (
+    RetrievalPipeline,
+    RetrievalStatistics,
+    RetrievalTrace,
+)
+from rec_researcher.retrieval.vector_store import InMemoryVectorIndex
 from rec_researcher.workflow.budget import RunBudget
 from rec_researcher.workflow.scheduler import AsyncTaskScheduler, ScheduledTask
 
@@ -67,6 +78,7 @@ class ResearchOrchestrator:
         web_fetcher: WebFetcher | None = None,
         passage_chunker: PassageChunker | None = None,
         min_fetched_content_length: int = 50,
+        retrieval_pipeline: RetrievalPipeline | None = None,
     ) -> None:
         """Configure providers and independent workflow/retrieval limits."""
 
@@ -96,6 +108,14 @@ class ResearchOrchestrator:
             web_fetcher is None or passage_chunker is None
         ):
             raise ValueError("hybrid mode requires a web_fetcher and passage_chunker")
+        if retrieval_mode == "hybrid" and retrieval_pipeline is None:
+            if mode == "real":
+                raise ValueError("real hybrid mode requires a retrieval_pipeline")
+            retrieval_pipeline = RetrievalPipeline(
+                embedder=MockTextEmbedder(),
+                vector_index=InMemoryVectorIndex(),
+                reranker=MockPassageReranker(),
+            )
         if min_fetched_content_length < 1:
             raise ValueError("min_fetched_content_length must be at least 1")
         if timeout <= 0:
@@ -116,6 +136,7 @@ class ResearchOrchestrator:
         self.web_fetcher = web_fetcher
         self.passage_chunker = passage_chunker
         self.min_fetched_content_length = min_fetched_content_length
+        self.retrieval_pipeline = retrieval_pipeline
         self.evidence_builder = EvidenceBuilder(
             max_excerpt_length=evidence_excerpt_length
         )
@@ -133,6 +154,9 @@ class ResearchOrchestrator:
         sources: list[SourceRecord] = []
         passages: list[PassageRecord] = []
         raw_passage_count = 0
+        retrieval_stats = RetrievalStatistics()
+        retrieval_metadata: dict[str, RetrievalTrace] = {}
+        fetch_latency_ms = 0.0
         limitations: list[str] = []
         interrupted: BaseException | None = None
 
@@ -141,9 +165,24 @@ class ResearchOrchestrator:
                 tasks = await self.planner.create_tasks(normalized)
                 budget.consume_task(len(tasks))
                 task_results, sources = await self._research(tasks, budget)
+                fetch_started = time.perf_counter()
                 passages, raw_passage_count = await self._build_passages(
                     sources, budget
                 )
+                fetch_latency_ms = (time.perf_counter() - fetch_started) * 1000
+                if self.retrieval_mode == "hybrid":
+                    (
+                        passages,
+                        retrieval_metadata,
+                        retrieval_stats,
+                    ) = await self._retrieve_passages(
+                        run_id,
+                        normalized,
+                        tasks,
+                        task_results,
+                        passages,
+                        budget,
+                    )
         except TimeoutError:
             limitations.append(f"global timeout after {self.timeout:g} seconds")
             task_results = self._fill_missing_results(
@@ -183,24 +222,54 @@ class ResearchOrchestrator:
             fetch_failures=budget.fetch_failures,
             fallback_passages=budget.fallback_passages,
             raw_passage_count=raw_passage_count,
-            deduplicated_passage_count=len(passages),
+            deduplicated_passage_count=budget.deduplicated_passage_count,
+            bm25_candidate_count=retrieval_stats.bm25_candidate_count,
+            dense_candidate_count=retrieval_stats.dense_candidate_count,
+            fused_candidate_count=retrieval_stats.fused_candidate_count,
+            reranked_candidate_count=retrieval_stats.reranked_candidate_count,
+            final_passage_count=(
+                retrieval_stats.final_passage_count
+                if self.retrieval_mode == "hybrid"
+                else len(passages)
+            ),
+            embedding_calls=retrieval_stats.embedding_calls,
+            embedding_text_count=retrieval_stats.embedding_text_count,
+            reranker_calls=retrieval_stats.reranker_calls,
+            degradation_events=budget.degradation_events,
+            retrieval_latency_ms=retrieval_stats.retrieval_latency_ms,
+            fetch_latency_ms=fetch_latency_ms,
+            embedding_latency_ms=retrieval_stats.embedding_latency_ms,
+            rerank_latency_ms=retrieval_stats.rerank_latency_ms,
         )
         evidence = self.evidence_builder.build(
             passages,
             sources,
             relevance_scores={
-                passage.id: min(
-                    1.0,
-                    max(
-                        0.0,
-                        next(
-                            source.score or 0.0
-                            for source in sources
-                            if source.id == passage.source_id
-                        ),
-                    ),
+                passage.id: (
+                    retrieval_metadata[passage.id].rerank_score
+                    if passage.id in retrieval_metadata
+                    and retrieval_metadata[passage.id].rerank_score is not None
+                    else (
+                        retrieval_metadata[passage.id].rrf_score or 0.0
+                        if passage.id in retrieval_metadata
+                        else min(
+                            1.0,
+                            max(
+                                0.0,
+                                next(
+                                    source.score or 0.0
+                                    for source in sources
+                                    if source.id == passage.source_id
+                                ),
+                            ),
+                        )
+                    )
                 )
                 for passage in passages
+            },
+            retrieval_metadata={
+                passage_id: trace.model_dump()
+                for passage_id, trace in retrieval_metadata.items()
             },
         )
         budget.record_passage(len(passages))
@@ -248,6 +317,8 @@ class ResearchOrchestrator:
                 fallback_passages=budget.fallback_passages,
                 raw_passage_count=budget.raw_passage_count,
                 deduplicated_passage_count=budget.deduplicated_passage_count,
+                embedding_text_count=budget.embedding_text_count,
+                degradation_events=budget.degradation_events,
                 warnings=budget.warnings,
                 failed_tasks=budget.failed_tasks,
             ),
@@ -365,7 +436,7 @@ class ResearchOrchestrator:
                 raw_passages.extend(self.passage_chunker.chunk(source.id, outcome.text))
                 continue
             reason = outcome.error or "empty or too-short extracted content"
-            budget.add_warning(
+            budget.record_degradation(
                 f"fetch fallback for {source.id} ({source.url}): {reason}"
             )
             snippet = source.snippet.strip()
@@ -383,6 +454,62 @@ class ResearchOrchestrator:
         passages = deduplicate_passages(raw_passages)
         budget.record_passage_counts(raw=len(raw_passages), deduplicated=len(passages))
         return passages, len(raw_passages)
+
+    async def _retrieve_passages(
+        self,
+        run_id: str,
+        original_question: str,
+        tasks: list[InquiryTask],
+        task_results: list[TaskResult],
+        passages: list[PassageRecord],
+        budget: RunBudget,
+    ) -> tuple[list[PassageRecord], dict[str, RetrievalTrace], RetrievalStatistics]:
+        """Run the existing hybrid pipeline independently for every task."""
+
+        assert self.retrieval_pipeline is not None
+        results_by_task = {item.task_id: item for item in task_results}
+        selected: list[PassageRecord] = []
+        traces: dict[str, RetrievalTrace] = {}
+        totals = RetrievalStatistics()
+        for task in tasks:
+            result = results_by_task.get(task.id)
+            source_ids = set(result.source_ids if result is not None else [])
+            task_passages = [
+                passage.model_copy(update={"id": f"{run_id}:{task.id}:{passage.id}"})
+                for passage in passages
+                if passage.source_id in source_ids
+            ]
+            query = task.question.strip() or original_question
+            retrieval = await self.retrieval_pipeline.retrieve(
+                query,
+                task_passages,
+                namespace=f"{run_id}_{task.id}",
+            )
+            task_by_id = {passage.id: passage for passage in task_passages}
+            selected.extend(task_by_id[item.passage_id] for item in retrieval.passages)
+            traces.update(retrieval.traces)
+            for warning in retrieval.warnings:
+                budget.record_degradation(f"{task.id}: {warning}")
+            current = retrieval.statistics
+            for field in (
+                "bm25_candidate_count",
+                "dense_candidate_count",
+                "fused_candidate_count",
+                "reranked_candidate_count",
+                "final_passage_count",
+                "embedding_calls",
+                "embedding_text_count",
+                "reranker_calls",
+                "degradation_events",
+                "retrieval_latency_ms",
+                "embedding_latency_ms",
+                "rerank_latency_ms",
+            ):
+                setattr(totals, field, getattr(totals, field) + getattr(current, field))
+        budget.embedding_calls += totals.embedding_calls
+        budget.embedding_text_count += totals.embedding_text_count
+        budget.reranker_calls += totals.reranker_calls
+        return selected, traces, totals
 
     async def _write_report(self, output: ResearchOutput) -> None:
         try:
