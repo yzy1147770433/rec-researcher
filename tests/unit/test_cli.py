@@ -112,8 +112,13 @@ def test_run_real_fails_early_when_configuration_is_missing(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_run_real_hybrid_fails_early_without_siliconflow(tmp_path: Path) -> None:
-    secret = "cli-factory-complete-secret"
+def test_run_real_hybrid_does_not_require_siliconflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_run(_orchestrator: object, _question: str) -> object:
+        return SimpleNamespace(run_id="hybrid-run")
+
+    monkeypatch.setattr("rec_researcher.cli.ResearchOrchestrator.run", fake_run)
     result = runner.invoke(
         app,
         [
@@ -128,7 +133,7 @@ def test_run_real_hybrid_fails_early_without_siliconflow(tmp_path: Path) -> None
         ],
         env={
             "REC_LLM_BASE_URL": "https://llm.invalid/v1",
-            "REC_LLM_API_KEY": secret,
+            "REC_LLM_API_KEY": "llm-secret",
             "REC_LLM_MODEL": "model",
             "REC_TAVILY_API_KEY": "tavily-secret",
             "REC_SILICONFLOW_API_KEY": "",
@@ -137,10 +142,8 @@ def test_run_real_hybrid_fails_early_without_siliconflow(tmp_path: Path) -> None
         },
     )
 
-    assert result.exit_code == 2
-    assert "siliconflow_api_key" in result.output
-    assert secret not in result.output
-    assert list(tmp_path.iterdir()) == []
+    assert result.exit_code == 0
+    assert "Run ID: hybrid-run" in result.output
 
 
 def test_run_real_applies_cli_timeout_to_provider_settings(
@@ -176,6 +179,7 @@ def test_run_help_lists_retrieval_provider_options() -> None:
     assert result.exit_code == 0
     for option in (
         "--retrieval-mode",
+        "--fetch-concurrency",
         "--embedding-provider",
         "--reranker-provider",
         "--vector-store",

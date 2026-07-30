@@ -20,6 +20,8 @@ from rec_researcher.evaluation.runner import BenchmarkRunner
 from rec_researcher.planning.planner import ResearchPlanner
 from rec_researcher.providers.factory import ProviderFactory
 from rec_researcher.reporting.writer import RealReportWriter
+from rec_researcher.retrieval.chunker import PassageChunker
+from rec_researcher.retrieval.fetcher import AsyncWebFetcher
 from rec_researcher.workflow.orchestrator import ResearchOrchestrator
 
 app = typer.Typer(no_args_is_help=True, help="Research recommender-system questions.")
@@ -75,6 +77,9 @@ def run(
     retrieval_concurrency: Annotated[
         int | None, typer.Option("--retrieval-concurrency", min=1)
     ] = None,
+    fetch_concurrency: Annotated[
+        int | None, typer.Option("--fetch-concurrency", min=1)
+    ] = None,
     timeout: Annotated[float | None, typer.Option("--timeout", min=0.001)] = None,
     max_sources: Annotated[int | None, typer.Option("--max-sources", min=1)] = None,
     retrieval_mode: Annotated[
@@ -113,6 +118,11 @@ def run(
             factory.validate_configuration()
             llm = factory.create_language_model()
             search = factory.create_search_provider()
+            fetcher = (
+                AsyncWebFetcher(provider_settings)
+                if retrieval_mode == "hybrid"
+                else None
+            )
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
                 planner=ResearchPlanner(llm),
@@ -126,10 +136,26 @@ def run(
                 retrieval_concurrency=(
                     retrieval_concurrency or settings.max_concurrency
                 ),
+                fetch_concurrency=fetch_concurrency or settings.fetch_concurrency,
                 timeout=timeout or settings.request_timeout_seconds,
                 evidence_excerpt_length=settings.evidence_excerpt_length,
+                retrieval_mode=retrieval_mode,
+                web_fetcher=fetcher,
+                passage_chunker=(
+                    PassageChunker(provider_settings)
+                    if retrieval_mode == "hybrid"
+                    else None
+                ),
             )
-            result = asyncio.run(orchestrator.run(question))
+
+            async def run_real() -> object:
+                try:
+                    return await orchestrator.run(question)
+                finally:
+                    if fetcher is not None:
+                        await fetcher.aclose()
+
+            result = asyncio.run(run_real())
         else:
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
@@ -138,6 +164,7 @@ def run(
                 sources_per_query=settings.max_sources_per_query,
                 max_concurrency=max_concurrency or settings.max_concurrency,
                 retrieval_concurrency=retrieval_concurrency or settings.max_concurrency,
+                fetch_concurrency=fetch_concurrency or settings.fetch_concurrency,
                 timeout=timeout or settings.request_timeout_seconds,
                 evidence_excerpt_length=settings.evidence_excerpt_length,
             )

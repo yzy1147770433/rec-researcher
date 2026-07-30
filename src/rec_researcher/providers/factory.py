@@ -94,8 +94,6 @@ class ProviderFactory:
                 llm_model=self.settings.llm_model,
                 tavily_api_key=self.settings.tavily_api_key,
             )
-        if self.selection.retrieval_mode == "hybrid":
-            self._validate_hybrid_configuration()
 
     def create_language_model(self) -> LanguageModel:
         """Create the language model selected by runtime mode."""

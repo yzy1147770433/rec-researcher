@@ -82,6 +82,17 @@ def test_budget_tracks_and_enforces_counts() -> None:
     assert budget.search_calls == 1
     assert budget.start_time.tzinfo is not None
     assert budget.elapsed_seconds >= 0
+    budget.record_fetch(success=True)
+    budget.record_fetch(success=False)
+    budget.record_fallback_passage()
+    budget.record_passage_counts(raw=3, deduplicated=2)
+    assert (budget.fetch_attempts, budget.fetch_successes, budget.fetch_failures) == (
+        2,
+        1,
+        1,
+    )
+    assert budget.fallback_passages == 1
+    assert (budget.raw_passage_count, budget.deduplicated_passage_count) == (3, 2)
     with pytest.raises(BudgetExceededError):
         budget.consume_task()
     with pytest.raises(BudgetExceededError):

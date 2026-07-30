@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     mode: Literal["mock", "real"] = "mock"
     output_dir: Path = Path("outputs")
     max_concurrency: int = Field(default=3, ge=1)
+    fetch_concurrency: int = Field(default=3, ge=1)
     request_timeout_seconds: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=2, ge=0)
     max_response_bytes: int = Field(default=5_000_000, ge=1)
