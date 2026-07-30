@@ -260,6 +260,25 @@ async def test_snippet_mode_keeps_one_passage_per_source(tmp_path: Path) -> None
     assert run.output.statistics.fetch_attempts == 0
 
 
+async def test_hybrid_can_cap_final_passages_globally(tmp_path: Path) -> None:
+    sources = [
+        _source(str(index), f"https://example.test/{index}") for index in range(3)
+    ]
+    fetcher = RecordingFetcher(
+        {
+            source.id: (True, f"Fetched article {source.id} with enough useful text.")
+            for source in sources
+        }
+    )
+    orchestrator = _hybrid(tmp_path, sources, fetcher)
+    orchestrator.final_passage_limit = 2
+
+    run = await orchestrator.run("question")
+
+    assert len(run.output.passages) == 2
+    assert run.output.statistics.final_passage_count == 2
+
+
 async def test_hybrid_isolates_task_and_run_passage_ids(tmp_path: Path) -> None:
     source = _source("shared", "https://example.test/shared", "shared useful text")
     orchestrator = ResearchOrchestrator(

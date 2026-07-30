@@ -39,10 +39,15 @@ class ResearchPlanner:
         ("reproduction", "复现建议"),
     )
 
-    def __init__(self, language_model: LanguageModel | None = None) -> None:
+    def __init__(
+        self, language_model: LanguageModel | None = None, *, max_tasks: int = 5
+    ) -> None:
         """Use deterministic planning unless a real language model is supplied."""
 
+        if not 3 <= max_tasks <= 5:
+            raise ValueError("max_tasks must be between 3 and 5")
         self.language_model = language_model
+        self.max_tasks = max_tasks
 
     async def create_tasks(self, question: str) -> list[InquiryTask]:
         """Create a validated plan, attempting exactly one JSON format repair."""
@@ -56,7 +61,8 @@ class ResearchPlanner:
         prompt = (
             "Create a research plan for the question below. Return JSON only with "
             'this exact shape: {"tasks":[{"objective":"...","queries":["..."]}]}. '
-            "Return 3 to 5 tasks. Every objective and query must be non-empty.\n\n"
+            f"Return 3 to {self.max_tasks} tasks. Every objective and query must be "
+            "non-empty.\n\n"
             f"Question: {normalized}"
         )
         raw = await self.language_model.generate(prompt)
@@ -85,7 +91,7 @@ class ResearchPlanner:
                 priority=index,
                 search_queries=task.queries,
             )
-            for index, task in enumerate(plan.tasks, start=1)
+            for index, task in enumerate(plan.tasks[: self.max_tasks], start=1)
         ]
 
     @classmethod
@@ -99,8 +105,7 @@ class ResearchPlanner:
                 f"LLM research plan does not match the required schema: {details}"
             ) from exc
 
-    @classmethod
-    def _mock_tasks(cls, question: str) -> list[InquiryTask]:
+    def _mock_tasks(self, question: str) -> list[InquiryTask]:
         return [
             InquiryTask(
                 id=f"task-{index}",
@@ -108,5 +113,5 @@ class ResearchPlanner:
                 priority=index,
                 search_queries=[f"{question} {label}"],
             )
-            for index, (_, label) in enumerate(cls._ASPECTS, start=1)
-        ]
+            for index, (_, label) in enumerate(self._ASPECTS, start=1)
+        ][: self.max_tasks]

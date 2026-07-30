@@ -61,6 +61,24 @@ async def test_real_planner_accepts_markdown_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_planner_respects_configured_task_cap() -> None:
+    response = (
+        '{"tasks":['
+        + ",".join(
+            f'{{"objective":"task {index}","queries":["q{index}"]}}'
+            for index in range(1, 6)
+        )
+        + "]}"
+    )
+
+    tasks = await ResearchPlanner(
+        StubLanguageModel([response]), max_tasks=3
+    ).create_tasks("question")
+
+    assert len(tasks) == 3
+
+
+@pytest.mark.asyncio
 async def test_real_planner_repairs_once_then_fails_clearly() -> None:
     model = StubLanguageModel(["invalid", "still invalid"])
 

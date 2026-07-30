@@ -52,11 +52,12 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -m 'not network and not integration'"
+addopts = "--strict-config --strict-markers -m 'not network and not network_e2e and not integration'"
 testpaths = ["tests"]
 markers = [
     "integration: tests that require local external services or system capabilities",
     "network: tests that require network access and credentials",
+    "network_e2e: opt-in end-to-end tests that make real billable API calls",
 ]
 
 [tool.ruff]
