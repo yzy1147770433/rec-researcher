@@ -1,11 +1,15 @@
+import asyncio
 import json
 import re
 from pathlib import Path
 
 import pytest
 
-from rec_researcher.core.models import SourceRecord, WorkState
+from rec_researcher.core.models import InquiryTask, SourceRecord, WorkState
+from rec_researcher.core.settings import Settings
 from rec_researcher.providers.mock import MockSearchProvider
+from rec_researcher.retrieval.chunker import PassageChunker
+from rec_researcher.retrieval.fetcher import FetchResult
 from rec_researcher.workflow.orchestrator import ResearchOrchestrator
 
 pytestmark = pytest.mark.asyncio
@@ -25,6 +29,74 @@ class FailingSearchProvider:
 class AlwaysFailingSearchProvider:
     async def search(self, query: str, *, limit: int) -> list[SourceRecord]:
         raise RuntimeError("all unavailable")
+
+
+class OneTaskPlanner:
+    async def create_tasks(self, question: str) -> list[InquiryTask]:
+        return [InquiryTask(id="task-1", question=question, search_queries=[question])]
+
+
+class StaticSearchProvider:
+    def __init__(self, sources: list[SourceRecord]) -> None:
+        self.sources = sources
+
+    async def search(self, query: str, *, limit: int) -> list[SourceRecord]:
+        return self.sources[:limit]
+
+
+class RecordingFetcher:
+    def __init__(self, outcomes: dict[str, tuple[bool, str]]) -> None:
+        self.outcomes = outcomes
+        self.calls: list[str] = []
+        self.active = 0
+        self.max_active = 0
+
+    async def fetch(self, source: SourceRecord) -> FetchResult:
+        self.calls.append(str(source.url))
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.01)
+        self.active -= 1
+        success, text = self.outcomes[source.id]
+        return FetchResult(
+            source_id=source.id,
+            url=str(source.url),
+            success=success,
+            text=text if success else "",
+            error=None if success else text,
+        )
+
+
+def _source(
+    identifier: str, url: str, snippet: str = "fallback snippet"
+) -> SourceRecord:
+    return SourceRecord(
+        id=identifier,
+        title=identifier,
+        url=url,
+        snippet=snippet,
+        provider="fixture",
+    )
+
+
+def _hybrid(
+    tmp_path: Path,
+    sources: list[SourceRecord],
+    fetcher: RecordingFetcher,
+    *,
+    chunk_size: int = 40,
+) -> ResearchOrchestrator:
+    settings = Settings(_env_file=None, chunk_size=chunk_size, chunk_overlap=5)
+    return ResearchOrchestrator(
+        output_dir=tmp_path,
+        planner=OneTaskPlanner(),  # type: ignore[arg-type]
+        search_provider=StaticSearchProvider(sources),
+        retrieval_mode="hybrid",
+        web_fetcher=fetcher,
+        passage_chunker=PassageChunker(settings),
+        fetch_concurrency=2,
+        min_fetched_content_length=10,
+    )
 
 
 async def test_real_mode_requires_explicit_non_mock_composition(tmp_path: Path) -> None:
@@ -87,3 +159,89 @@ async def test_all_tasks_fail_but_run_json_is_saved(tmp_path: Path) -> None:
     assert run.budget.failed_tasks == [f"task-{index}" for index in range(1, 6)]
     assert run.budget.search_calls == 5
     assert (tmp_path / run.run_id / "run.json").exists()
+
+
+async def test_hybrid_fetches_concurrently_and_isolates_failure(tmp_path: Path) -> None:
+    sources = [
+        _source("good", "https://example.test/good"),
+        _source("bad", "https://example.test/bad", "usable failure fallback"),
+    ]
+    fetcher = RecordingFetcher(
+        {
+            "good": (True, "A sufficiently long fetched article body."),
+            "bad": (False, "boom"),
+        }
+    )
+
+    run = await _hybrid(tmp_path, sources, fetcher).run("question")
+
+    assert fetcher.max_active == 2
+    assert run.output.statistics.fetch_attempts == 2
+    assert run.output.statistics.fetch_successes == 1
+    assert run.output.statistics.fetch_failures == 1
+    assert run.output.statistics.fallback_passages == 1
+    assert {passage.content_origin for passage in run.output.passages} == {
+        "fetched",
+        "search_snippet_fallback",
+    }
+    assert any("fetch fallback for bad" in warning for warning in run.budget.warnings)
+
+
+async def test_hybrid_fetches_normalized_url_once_and_preserves_source_link(
+    tmp_path: Path,
+) -> None:
+    sources = [
+        _source("first", "https://EXAMPLE.test/article/"),
+        _source("second", "https://example.test/article#section"),
+    ]
+    fetcher = RecordingFetcher(
+        {"first": (True, "Fetched content long enough to make a linked passage.")}
+    )
+
+    run = await _hybrid(tmp_path, sources, fetcher).run("question")
+
+    assert len(fetcher.calls) == 1
+    assert [source.id for source in run.output.sources] == ["first"]
+    assert all(passage.source_id == "first" for passage in run.output.passages)
+    assert run.output.task_results[0].source_ids == ["first", "first"]
+
+
+async def test_empty_body_falls_back_to_snippet(tmp_path: Path) -> None:
+    source = _source("empty", "https://example.test/empty", "snippet survives")
+    run = await _hybrid(
+        tmp_path, [source], RecordingFetcher({"empty": (True, "")})
+    ).run("question")
+
+    assert [passage.text for passage in run.output.passages] == ["snippet survives"]
+    assert run.output.passages[0].content_origin == "search_snippet_fallback"
+    assert run.output.statistics.fetch_failures == 1
+
+
+async def test_hybrid_outputs_multiple_source_linked_chunks(tmp_path: Path) -> None:
+    source = _source("many", "https://example.test/many")
+    body = (
+        "First paragraph has useful details.\n\n"
+        "Second paragraph also has useful details."
+    )
+    run = await _hybrid(
+        tmp_path, [source], RecordingFetcher({"many": (True, body)}), chunk_size=35
+    ).run("question")
+
+    assert len(run.output.passages) > 1
+    assert all(passage.source_id == source.id for passage in run.output.passages)
+    assert [passage.chunk_index for passage in run.output.passages] == list(
+        range(len(run.output.passages))
+    )
+
+
+async def test_snippet_mode_keeps_one_passage_per_source(tmp_path: Path) -> None:
+    run = await ResearchOrchestrator(
+        output_dir=tmp_path,
+        planner=OneTaskPlanner(),  # type: ignore[arg-type]
+        search_provider=StaticSearchProvider(
+            [_source("one", "https://example.test/one", "original snippet")]
+        ),
+    ).run("question")
+
+    assert [passage.text for passage in run.output.passages] == ["original snippet"]
+    assert run.output.statistics.fetch_attempts == 0

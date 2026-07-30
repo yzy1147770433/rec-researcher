@@ -24,6 +24,12 @@ class RunBudget:
     fetched_pages: int = 0
     source_count: int = 0
     passage_count: int = 0
+    fetch_attempts: int = 0
+    fetch_successes: int = 0
+    fetch_failures: int = 0
+    fallback_passages: int = 0
+    raw_passage_count: int = 0
+    deduplicated_passage_count: int = 0
     warnings: list[str] = field(default_factory=list)
     failed_tasks: list[str] = field(default_factory=list)
     task_count: int = 0
@@ -83,6 +89,30 @@ class RunBudget:
 
         self._validate_count(count)
         self.fetched_pages += count
+
+    def record_fetch(self, *, success: bool) -> None:
+        """Record one attempted page fetch and its terminal outcome."""
+
+        self.fetch_attempts += 1
+        if success:
+            self.fetch_successes += 1
+            self.record_fetched_page()
+        else:
+            self.fetch_failures += 1
+
+    def record_fallback_passage(self, count: int = 1) -> None:
+        """Record passages created from search snippets after fetch degradation."""
+
+        self._validate_count(count)
+        self.fallback_passages += count
+
+    def record_passage_counts(self, *, raw: int, deduplicated: int) -> None:
+        """Record corpus sizes before and after text deduplication."""
+
+        self._validate_count(raw)
+        self._validate_count(deduplicated)
+        self.raw_passage_count += raw
+        self.deduplicated_passage_count += deduplicated
 
     def record_passage(self, count: int = 1) -> None:
         """Record passages made available to retrieval."""
