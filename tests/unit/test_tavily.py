@@ -30,13 +30,13 @@ async def test_duplicate_urls_are_removed() -> None:
                 "results": [
                     {
                         "title": "First",
-                        "url": "https://example.com/a",
+                        "url": "https://arxiv.org/abs/one",
                         "content": "content",
                         "score": 0.9,
                     },
                     {
                         "title": "Duplicate",
-                        "url": "https://example.com/a",
+                        "url": "https://arxiv.org/abs/one",
                         "content": "other",
                         "score": 0.8,
                     },
@@ -94,6 +94,70 @@ async def test_error_does_not_expose_api_key() -> None:
             )
 
     assert "test-secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize("status", [429, 502, 503, 504])
+async def test_retries_transient_statuses(status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(status, text="temporary")
+        return httpx.Response(200, json={"results": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert (
+            await TavilySearchProvider(_settings(), client=client).search(
+                "query", limit=1
+            )
+            == []
+        )
+
+    assert calls == 2
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_does_not_retry_auth_errors(status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(status, text="denied")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderError, match=f"status {status}"):
+            await TavilySearchProvider(_settings(), client=client).search(
+                "query", limit=1
+            )
+
+    assert calls == 1
+
+
+async def test_reserved_example_dot_com_sources_are_excluded() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": "Reserved", "url": "https://example.com/paper"},
+                    {
+                        "title": "Reserved subdomain",
+                        "url": "https://papers.example.com/paper",
+                    },
+                    {"title": "Real", "url": "https://arxiv.org/abs/one"},
+                ]
+            },
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        results = await TavilySearchProvider(_settings(), client=client).search(
+            "query", limit=5
+        )
+
+    assert [str(item.url) for item in results] == ["https://arxiv.org/abs/one"]
 
 
 async def test_network_error_is_wrapped_without_details() -> None:

@@ -50,6 +50,22 @@ class ResearchOrchestrator:
     ) -> None:
         """Configure providers and independent workflow/retrieval limits."""
 
+        if mode not in {"mock", "real"}:
+            raise ValueError("mode must be 'mock' or 'real'")
+        if mode == "real":
+            missing = [
+                name
+                for name, value in (
+                    ("planner", planner),
+                    ("search_provider", search_provider),
+                    ("writer", writer),
+                )
+                if value is None
+            ]
+            if missing:
+                raise ValueError(
+                    "real mode requires explicit providers: " + ", ".join(missing)
+                )
         if retrieval_concurrency < 1:
             raise ValueError("retrieval_concurrency must be at least 1")
         if timeout <= 0:

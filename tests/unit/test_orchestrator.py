@@ -27,6 +27,11 @@ class AlwaysFailingSearchProvider:
         raise RuntimeError("all unavailable")
 
 
+async def test_real_mode_requires_explicit_non_mock_composition(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="real mode requires explicit providers"):
+        ResearchOrchestrator(output_dir=tmp_path, mode="real")
+
+
 async def test_normal_run_writes_traceable_outputs(tmp_path: Path) -> None:
     orchestrator = ResearchOrchestrator(output_dir=tmp_path)
     run = await orchestrator.run("序列推荐如何评估？")
