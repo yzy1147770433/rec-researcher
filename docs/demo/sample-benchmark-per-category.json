@@ -1,0 +1,202 @@
+{
+  "DIN": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.9444444444444444,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 166.79467560299963,
+      "provider_calls": 38.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "DeepFM": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.75,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 202.14816716399218,
+      "provider_calls": 36.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "ItemCF": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.7272727272727273,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 200.47488493200217,
+      "provider_calls": 42.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "MMOE": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.7058823529411765,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 197.3637672499899,
+      "provider_calls": 33.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "Semantic ID": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.9230769230769231,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 174.06177206400025,
+      "provider_calls": 29.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "YouTubeDNN": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.6842105263157895,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 169.9057110260037,
+      "provider_calls": 39.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "mrr": 0.3333333333333333,
+      "ndcg_at_5": 0.5
+    }
+  },
+  "图协同过滤": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.9375,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 199.31499126000563,
+      "provider_calls": 36.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "序列推荐": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.9285714285714286,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 244.27720627600502,
+      "provider_calls": 26.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "推荐系统离线评估": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.782608695652174,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 211.69848716301203,
+      "provider_calls": 43.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  },
+  "生成式推荐": {
+    "total_cases": 1,
+    "successful_cases": 1,
+    "failed_cases": 0,
+    "mean_metrics": {
+      "task_success_rate": 1.0,
+      "citation_coverage": 1.0,
+      "valid_url_rate": 1.0,
+      "source_diversity": 0.9285714285714286,
+      "duplicate_rate": 0.0,
+      "report_section_completeness": 1.0,
+      "latency_seconds": 166.21412445300666,
+      "provider_calls": 30.0,
+      "provider_failure_rate": 0.0,
+      "recall_at_3": 0.0,
+      "recall_at_5": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0
+    }
+  }
+}

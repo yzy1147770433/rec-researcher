@@ -1,0 +1,10 @@
+{
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "citation_coverage": 1.0,
+  "source_diversity": 0.08695652173913043,
+  "cited_source_count": 2,
+  "available_source_count": 23,
+  "uncited_long_paragraphs": []
+}
