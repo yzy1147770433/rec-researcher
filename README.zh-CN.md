@@ -6,81 +6,49 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-RecResearcher 是一个面向推荐系统技术调研与论文复现分析的轻量 Research Agent。它将
-问题规划、来源检索、证据绑定、引用校验、领域分析和离线评测组织成可测试的 Python
-工作流。
+RecResearcher 是一个面向推荐系统技术调研和论文复现分析的轻量 Research Agent。它通过
+有界异步搜索、混合检索、领域分析和确定性引用校验，将研究问题转换为来源可追溯的报告。
 
-项目的主要目标是生成可沿稳定来源标识和 URL 回溯的研究报告，而不是只返回一段无法
-审计的模型回答。
-
-本项目基于公开技术思想和本仓库自身需求独立实现，采用 `src/` 布局、Pydantic v2
-领域模型、Protocol Provider 边界与原生 `asyncio` 编排，不依赖 LangChain 或
-LangGraph。
+项目采用 `src/` 布局、Pydantic v2 模型、Protocol Provider 边界和原生
+`asyncio`，不依赖 LangChain 或 LangGraph。Mock 模式和默认测试无需 API Key 或网络。
 
 ## 核心特性
 
-- 将研究问题拆成 3–5 个有界调研任务。
-- 限制任务数、来源数、并发量、重试次数和超时时间。
-- 提供确定性的离线 Planner、Search、Embedding 和 Reranker Fake。
-- Real 模式支持 OpenAI-compatible LLM 与 Tavily 搜索。
-- 提供网页抓取、正文提取、分块、URL/文本去重、BM25、向量召回、加权 RRF、
-  Reranker 和 MMR 组件。
-- 每条证据均保留 passage、source ID 和 URL 关系。
-- 使用稳定的 `[S1]` 引用编号，并验证编号连续性和 URL 一致性。
-- 识别推荐系统任务、模型家族、数据集、指标、GitHub 地址和硬件证据。
-- 使用透明规则评估复现难度；证据缺失或冲突时保留不确定性。
-- 隔离 Provider 和单个来源失败，避免一次失败终止整个调研任务。
-- 网络测试默认关闭；默认测试不需要 API Key 或互联网。
+- CLI 已接入完整 hybrid pipeline：网页抓取、正文提取、分块、去重、BM25、稠密召回、
+  加权 RRF、Reranker 和 MMR。
+- Real 模式可组合 OpenAI-compatible LLM、Tavily、SiliconFlow Embedding/Reranker，
+  以及 Milvus Lite 或内存向量索引。
+- 每条报告输入证据都保留 passage ID、source ID 和来源 URL。
+- 单个 Provider 或来源失败不会终止整个研究运行。
+- 提供确定性的 Mock Planner、Search、Fetcher、Embedding、Reranker 和向量索引，便于
+  离线回归测试。
+- 面向推荐系统识别模型类别、数据集、指标、代码地址、硬件证据和复现风险。
 
 ## 架构
 
+下图实线是当前 `rec-researcher run --retrieval-mode hybrid` 的真实执行路径；snippet
+模式使用 `Search → Evidence` 的直接路径。
+
 ```mermaid
-flowchart TD
-    CLI[CLI / Benchmark] --> Planner[Planner]
-    Planner --> Scheduler[Async Scheduler + Budget]
-    Scheduler --> Search[SearchProvider Protocol]
-    Search --> Sources[SourceRecord]
-
-    Sources -. 可选检索管线 .-> Fetch[Fetch + Extract]
-    Fetch -.-> Chunk[Chunk + Dedup]
-    Chunk -.-> BM25[BM25]
-    Chunk -.-> Dense[Embedding + Vector Index]
-    BM25 -.-> RRF[Weighted RRF]
-    Dense -.-> RRF
-    RRF -.-> Reranker[Reranker]
-    Reranker -.-> MMR[MMR Diversity]
-
-    Sources --> Passages[PassageRecord]
-    MMR -.-> Passages
-    Passages --> Evidence[EvidenceBuilder]
-    Evidence --> Domain[Recommendation Analyzer]
-    Evidence --> Report[ReportWriter]
-    Domain --> Report
-    Report --> Verify[CitationVerifier]
-    Verify --> Artifacts[Markdown / JSON artifacts]
-
-    Mock[Deterministic Mock Providers] --> Planner
-    Mock --> Search
-    Real[LLM / Tavily / SiliconFlow / Milvus] -. adapters .-> Search
+flowchart LR
+    CLI[CLI] --> Planner[Planner]
+    Planner --> Search[Search]
+    Search --> Fetch[Fetch]
+    Fetch --> Chunk[Chunk + Dedup]
+    Chunk --> BM25[BM25]
+    Chunk --> Dense[Embedding + Milvus]
+    BM25 --> RRF[Weighted RRF]
+    Dense --> RRF
+    RRF --> Rerank[Rerank]
+    Rerank --> MMR[MMR]
+    MMR --> Evidence[Evidence]
+    Evidence --> Domain[Domain Analysis]
+    Domain --> Report[Report]
+    Report --> Verify[Verify]
 ```
 
-实线表示当前 `rec-researcher run` 的主流程，虚线表示已经实现并有测试、但尚未全部接入
-CLI 的检索组件。Real 模式目前使用 Tavily 返回的标题、URL 和 snippet 构建证据，尚未
-在同一次命令中自动执行网页全文抓取、Milvus、SiliconFlow Embedding 和 Reranker。
-
-## 调研流程
-
-1. CLI 校验运行模式并创建 `ResearchOrchestrator`。
-2. Planner 将非空问题拆成有界的 `InquiryTask`。Real Planner 返回无效 JSON 时允许
-   修复一次。
-3. Scheduler 使用 `asyncio`、semaphore、全局超时和来源预算执行任务。
-4. 每个任务调用 `SearchProvider`。失败任务记录错误，但不会取消其他独立任务。
-5. 搜索结果转换为 `SourceRecord` 和与来源绑定的 passage。
-6. `EvidenceBuilder` 生成保留 `source_id`、`passage_id`、摘录和相关性分数的证据。
-7. 领域分析器提取推荐系统实体并评估复现难度。
-8. Report Writer 只接收结构化来源和证据。Real 模式引用校验失败时允许修复一次，
-   再次失败则记录 warning。
-9. 每次运行保存报告、来源、证据、引用校验、任务结果和预算元数据。
+Planner 和 Search 使用有界 `asyncio` 并发，并受任务数、来源数和超时预算约束。即使
+部分任务失败或触发全局超时，运行也会持久化终态。
 
 ## 安装
 
@@ -94,104 +62,132 @@ uv sync --all-groups
 uv run rec-researcher doctor
 ```
 
-Mock 模式无需配置。使用 Real 模式前，先复制配置模板：
+## Quick Start
 
-```bash
-cp .env.example .env
-```
+### Mock snippet
 
-## 使用方法
-
-### 离线 Mock 运行
-
-Mock 来源是确定性、明确标记为虚构的测试夹具，用于测试和演示。
+默认路径使用确定性、明确为虚构内容的离线夹具：
 
 ```bash
 uv run rec-researcher run \
   "生成式推荐与双塔召回有什么区别？" \
-  --mode mock
+  --mode mock --retrieval-mode snippet
 ```
 
-### Real 模式
+### Mock hybrid
 
-在不被 Git 跟踪的 `.env` 中配置 OpenAI-compatible LLM 和 Tavily：
+无需外部服务即可执行抓取、分块、BM25、Mock 稠密召回、RRF、Mock Reranker 和 MMR：
+
+```bash
+uv run rec-researcher run \
+  "生成式推荐与双塔召回有什么区别？" \
+  --mode mock --retrieval-mode hybrid
+```
+
+### Real snippet
+
+将 `.env.example` 复制为 `.env`，配置 OpenAI-compatible LLM 和
+`REC_TAVILY_API_KEY`。以下内容只是配置占位符，不是真实凭据或真实服务地址。
 
 ```dotenv
-REC_LLM_BASE_URL=https://your-llm-endpoint.example/v1
-REC_LLM_API_KEY=your-secret
-REC_LLM_MODEL=your-model
-REC_TAVILY_API_KEY=your-secret
+REC_LLM_BASE_URL=https://your-provider.invalid/v1
+REC_LLM_API_KEY=replace-with-your-key
+REC_LLM_MODEL=replace-with-your-model
+REC_TAVILY_API_KEY=replace-with-your-key
 ```
-
-然后检查配置并启动任务：
 
 ```bash
 uv run rec-researcher doctor --real
 uv run rec-researcher run \
   "推荐系统生成式召回的代表工作" \
-  --mode real
+  --mode real --retrieval-mode snippet
 ```
 
-Real 模式会访问外部服务，结果可能受模型版本、搜索索引、页面更新、限流和 Provider
-可用性影响。
+### Real hybrid
 
-### 离线 Benchmark
+除 Real snippet 的字段外，还要配置 SiliconFlow 和两个模型。Milvus Lite 默认使用
+`./data/rec_researcher.db`。
+
+```dotenv
+REC_SILICONFLOW_API_KEY=replace-with-your-key
+REC_EMBEDDING_MODEL=replace-with-your-embedding-model
+REC_RERANKER_MODEL=replace-with-your-reranker-model
+```
+
+```bash
+uv run rec-researcher run \
+  "推荐系统生成式召回的代表工作" \
+  --mode real --retrieval-mode hybrid \
+  --embedding-provider siliconflow \
+  --reranker-provider siliconflow \
+  --vector-store milvus
+```
+
+Real 模式会发起外部请求，并可能产生 Provider 费用。搜索结果、网页内容、延迟和生成文本
+均不确定。
+
+## 完整混合检索流程
+
+1. **BM25** 召回精确技术术语、模型名和数据集名；英文使用词级 token，连续中文还使用
+   字符 bigram。
+2. **Embedding + Milvus** 分别编码网页 chunk 和 query，再执行余弦向量检索。Mock
+   模式使用确定性 Embedding 和内存索引；Real 模式可选 Milvus Lite 或内存索引。
+3. **Weighted RRF** 融合稀疏和稠密排名，不直接比较尺度不同的原始分数。
+4. **Reranker** 根据研究问题重新评估融合后的候选文本。
+5. **MMR** 综合相关性、token Jaccard 冗余度和同源惩罚，选择紧凑而多样的证据集。
+
+所有降级都会写入运行 warning。页面抓取失败或正文不可用时，若有搜索 snippet 则回退到
+snippet；Embedding 或向量索引失败时保留 BM25；Reranker 失败时保留 RRF 顺序；MMR
+失败时保留上一阶段顺序。空搜索结果、空语料和空 Reranker 输入均会安全处理。
+
+## 为什么这是推荐系统专属研究 Agent
+
+RecResearcher 不只是汇总网页，还会执行推荐系统领域分析：
+
+- 识别召回、排序、序列推荐、图方法、生成式召回等任务和模型类别。
+- 从已收集证据中识别数据集，以及 Recall、NDCG、MRR、AUC、LogLoss 等指标。
+- 将来源材料中出现的 GitHub 仓库 URL 与被分析工作匹配；没有证据时保留“未确认公开
+  代码”，不会编造链接。
+- 通过可见规则评估复现难度：缺少代码/数据、LLM 训练、分布式运行会增加难度，明确的
+  单卡可行性会降低难度；证据缺失或冲突时保留不确定性。
+- 只有来源记录实际包含相关证据时才报告 GPU 和显存要求；报告提示明确禁止生成无来源的
+  GPU 显存数字。
+
+这些能力是基于证据的抽取规则，不能替代人工阅读论文和代码仓库。
+
+## 运行结果示例
+
+仓库保留了一份真实运行快照。它用于展示产物格式，不保证未来运行得到相同结果：
+
+- [示例报告](docs/demo/sample-report.md)
+- [示例引用校验](docs/demo/sample-validation.json)
+- [示例运行摘要](docs/demo/sample-run-summary.json)
+
+普通运行会在 `outputs/<run-id>/` 下写入 `report.md`、`sources.json`、`evidence.json`、
+`validation.json` 和 `run.json`。
+
+## 实验与消融
+
+仓库中已有的 benchmark 输出包括
+[汇总 JSON](docs/demo/sample-benchmark-summary.json)和
+[对比表](docs/demo/sample-benchmark-comparison.md)。这些文件是带有自身运行配置的快照，
+不能外推为性能结论。
+
+运行离线 smoke benchmark：
 
 ```bash
 uv run rec-researcher benchmark examples/bench/smoke5.jsonl \
-  --mode mock --max-concurrency 3
+  --mode mock --retrieval-mode snippet --max-concurrency 3
+
+uv run rec-researcher benchmark examples/bench/smoke5.jsonl \
+  --mode mock --retrieval-mode hybrid --max-concurrency 3
 ```
 
-没有 `gold_source_ids` 的 case，其 Recall@K 和 MRR 会严格输出 `null`，评测器不会伪造
-相关性标签。指标定义见 [docs/evaluation.md](docs/evaluation.md)。
+评测库定义了具名阶段消融；当前 CLI 直接暴露 snippet 和完整 hybrid 两种配置。没有人工
+`gold_source_ids` 的 case 会将依赖相关性标注的指标写为 `null`，不会制造标签。详见
+[评测方法](docs/evaluation.md)和 [benchmark 协议](docs/benchmark-v0.2.md)。
 
-### 一键演示
-
-```bash
-bash examples/demo.sh
-```
-
-脚本依次运行本地 doctor、Ruff、默认测试和 Mock 示例，最后打印最新报告的路径。
-
-## 输出产物
-
-普通运行输出：
-
-```text
-outputs/<run-id>/
-├── report.md
-├── sources.json
-├── evidence.json
-├── validation.json
-└── run.json
-```
-
-Benchmark 输出：
-
-```text
-outputs/benchmarks/<benchmark-name>/
-├── cases/<case-id>.json
-├── runs/<case-id>/<run-id>/...
-└── summary.json
-```
-
-运行产物不会被 Git 跟踪；仓库只保留 `outputs/.gitkeep`。
-
-## 检索设计
-
-- **BM25**：用于召回精确术语、模型名和数据集名。英文使用词级 token，连续中文使用
-  字符 bigram。
-- **向量召回**：使用 Embedding 和 Milvus Lite 余弦相似度搜索。向量 Provider 失败时
-  安全降级到稀疏检索。
-- **加权 RRF**：融合不同召回通道的排名，无需比较尺度不一致的原始分数。
-- **Reranker**：精排融合后的候选。失败时保留 RRF 顺序并记录 warning。
-- **MMR**：结合相关性、token Jaccard 冗余度和同源惩罚选择多样化证据。
-
-空语料、空搜索结果和空 Reranker 文档均会被安全处理。
-
-## Evidence 与 Citation
-
-证据追溯链路如下：
+## Evidence 与 Citation 校验
 
 ```text
 report claim [Sx] -> citation registry -> SourceRecord URL
@@ -199,70 +195,72 @@ report claim [Sx] -> citation registry -> SourceRecord URL
 EvidenceRecord -> PassageRecord -> source_id
 ```
 
-`CitationVerifier` 能够识别未知或缺失标签、编号断档、重复 References、主要章节缺少
-引用，以及引用 URL 与来源记录不一致。引用覆盖率只衡量结构有效性，并不证明现实主张
-一定真实。
+校验器检查未知或缺失编号、编号断档、重复 References、主要章节无引用，以及 URL 与来源
+注册表不一致。`valid: true` 只表示这些结构检查通过，不证明事实真实、内容新鲜、来源优质
+或来源相互独立。
 
-## 开发与测试
+## Troubleshooting
 
-运行静态检查：
+### WSL + Clash Verge
+
+WSL 不一定自动继承 Windows 代理。先在 Clash Verge 中允许局域网连接，确认 WSL 可访问的
+Windows 主机地址，再按 Clash 实际端口为当前 shell 设置：
+
+```bash
+export HTTP_PROXY=http://<windows-host>:<proxy-port>
+export HTTPS_PROXY=http://<windows-host>:<proxy-port>
+```
+
+检查连通性时不要打印 secret。如果当前 WSL 配置支持 localhost 转发，可以尝试
+`127.0.0.1`；否则使用主机地址。
+
+### `HTTPX ReadTimeout`
+
+代理或 Provider 较慢时，可以增大单次请求超时并降低检索并发：
+
+```bash
+uv run rec-researcher run "你的问题" --mode real \
+  --retrieval-mode hybrid --timeout 60 \
+  --retrieval-concurrency 2 --fetch-concurrency 2
+```
+
+### SiliconFlow HTTP 429
+
+429 会重试，最多执行 `REC_MAX_RETRIES + 1` 次请求。应降低检索并发、等待限流窗口，或
+检查账户额度。额度耗尽时不要反复增加重试次数。
+
+### Milvus 维度不一致
+
+按某个 Embedding 维度创建的 collection 不能存储另一种维度。每个 collection 固定使用
+一个 Embedding 模型；切换模型后应设置新的 `REC_MILVUS_COLLECTION`，必要时也设置新的
+`REC_MILVUS_URI`，不要复用旧维度 schema。
+
+### citation validation 为 `false`
+
+打开当前运行的 `validation.json` 查看 `errors`，再将报告中的 `[Sx]` 和 References URL
+与 `sources.json` 对照。Real Report 会自动尝试一次引用修复；仍失败时会保留 warning，
+不会隐藏问题。`false` 不是对报告事实真假的直接判断。
+
+## 开发与验证
 
 ```bash
 uv run ruff check .
-```
-
-运行确定性的默认测试：
-
-```bash
-uv run pytest
-```
-
-Milvus Lite 测试需要绑定本机 socket，因此单独归入集成测试：
-
-```bash
-uv run pytest tests/unit/test_vector_store.py -m integration
-```
-
-网络测试需要显式配置凭据并主动选择：
-
-```bash
-uv run pytest -m network
-```
-
-构建 wheel 和源码包：
-
-```bash
+uv run pytest -q
 uv build
 ```
 
-## Secret 安全
-
-- 凭据只从 `REC_*` 环境变量或本地 `.env` 读取。
-- API Key 使用 Pydantic `SecretStr`；安全摘要只显示是否已配置。
-- `.env`、数据库、运行输出、日志和 coverage 文件均被忽略。
-- Provider 错误和日志不得暴露 Authorization header 或完整 secret。
+默认测试排除网络和本地服务集成 marker。网络测试必须配置凭据，并使用 `-m network` 或
+`-m network_e2e` 显式启用。
 
 ## 当前限制
 
-- CLI 尚未将网页全文抓取、分块、BM25/向量召回、RRF、Reranker 和 MMR 全部接入
-  同一次端到端运行。
-- Real 模式目前只组合 OpenAI-compatible LLM 与 Tavily；SiliconFlow 和 Milvus Lite
-  尚未成为 CLI 可选的端到端 Provider。
-- Mock 来源是回归夹具，不能用于评价真实研究质量。
-- 规则式领域抽取不能替代人工论文审阅。
-- 引用校验只验证结构和映射，不验证事实真实性、时效性或来源独立性。
-- 五个 smoke benchmark case 没有人工 relevance judgment。
+- PDF、表格、公式、附录等结构化内容解析能力有限；二进制 PDF 通常回退到 snippet。
+- 引用校验只检查报告结构和来源映射，不等于事实验证，也不验证时效性或来源独立性。
+- 真实网络运行非确定性，受 Provider 可用性、限流、搜索索引和网页变化影响。
+- 仓库中的人工 benchmark 规模较小，其输出只适合回归参考，不能代表广泛的研究质量或
+  性能结论。
+- 基于规则的推荐系统实体抽取可能漏识别或错误关联，仍需人工复核。
 
-## 路线图
-
-- 将完整检索管线接入 Orchestrator。
-- 在 CLI 中支持选择 Embedding、Reranker 和 Vector Index。
-- 增加带人工 relevance judgment 的版本化 Benchmark。
-- 增加论文 PDF、表格和附录的结构化解析。
-- 将推荐论文画像保存为独立 artifact。
-- 在保证 secret 脱敏的前提下改进预算、延迟和 Provider 降级可观测性。
-- 扩展 opt-in 端到端网络测试和长期回归基线。
-
-## 许可证
+## License
 
 RecResearcher 使用 [MIT License](LICENSE)。

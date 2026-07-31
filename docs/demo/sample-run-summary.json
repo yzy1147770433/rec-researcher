@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "elapsed_seconds": 211.61948224100342,
+  "search_calls": 5,
+  "embedding_calls": 10,
+  "reranker_calls": 5,
+  "source_count": 23,
+  "passage_count": 40,
+  "warnings": [
+    "fetch fallback for tavily-9f1ac5dd248dde7e (https://journal.ecust.edu.cn/cn/article/pdf/preview/10.14135/j.cnki.1006-3080.20220810001.pdf): binary content type: application/pdf",
+    "fetch fallback for tavily-358097f12dfaefda (https://math.pku.edu.cn/teachers/lidf/course/fts/ftsnotes/html/_ftsnotes/forecasting.html): [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1016)",
+    "fetch fallback for tavily-bff6e834d33893b6 (https://www.sciopen.com/local/article_pdf/10.12141/j.issn.1000-565X.250179.pdf): HTTP status 403",
+    "fetch fallback for tavily-64084bddfbd01bbc (http://cjc.ict.ac.cn/online/onlinepaper/wzs-20151228130502.pdf): binary content type: application/pdf",
+    "fetch fallback for tavily-0a278531acb03d3e (http://cjc.ict.ac.cn/online/onlinepaper/yxx-2024928105817.pdf): binary content type: application/pdf",
+    "fetch fallback for tavily-0640ecd155094a94 (https://ir.sdu.edu.cn/~zhuminchen/RS/evaluation.pdf): binary content type: application/pdf",
+    "fetch fallback for tavily-7d1cc363a854b2ab (https://zhuanlan.zhihu.com/p/584923052): HTTP status 403"
+  ],
+  "failed_tasks": []
+}
