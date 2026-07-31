@@ -1,4 +1,5 @@
 import json
+from inspect import signature
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from rec_researcher import __version__
-from rec_researcher.cli import app
+from rec_researcher.cli import app, benchmark
 
 runner = CliRunner()
 
@@ -258,4 +259,50 @@ def test_benchmark_mock_writes_summary(tmp_path: Path) -> None:
     assert "Cases: 5/5 successful" in result.stdout
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["total_cases"] == 5
-    assert summary["mean_metrics"]["recall_at_k"] is None
+    assert summary["mean_metrics"]["recall_at_5"] is None
+
+
+def test_benchmark_help_exposes_real_hybrid_options() -> None:
+    result = runner.invoke(app, ["benchmark", "--help"], terminal_width=180)
+
+    assert result.exit_code == 0
+    assert "--retrieval-mode" in result.output
+    assert "real" in result.output
+    assert {
+        "request_timeout",
+        "task_timeout",
+        "case_timeout",
+        "report_timeout",
+        "max_retries",
+        "vector_store",
+        "retrieval_concurrency",
+        "fetch_concurrency",
+        "resume",
+    } <= set(signature(benchmark).parameters)
+
+
+def test_benchmark_real_fails_before_network_when_configuration_missing(
+    tmp_path: Path,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "examples/bench/recsys10.v0.2.jsonl",
+            "--mode",
+            "real",
+            "--retrieval-mode",
+            "hybrid",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        env={
+            "REC_LLM_BASE_URL": "",
+            "REC_LLM_API_KEY": "",
+            "REC_LLM_MODEL": "",
+            "REC_TAVILY_API_KEY": "",
+        },
+    )
+
+    assert result.exit_code == 2
+    assert "Missing real-mode configuration" in result.output

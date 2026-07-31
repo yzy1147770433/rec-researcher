@@ -72,7 +72,10 @@ class ResearchOrchestrator:
         max_concurrency: int = 3,
         retrieval_concurrency: int = 3,
         fetch_concurrency: int = 3,
-        timeout: float = 120.0,
+        timeout: float | None = None,
+        task_timeout: float | None = None,
+        case_timeout: float | None = None,
+        report_timeout: float = 120.0,
         evidence_excerpt_length: int = 600,
         retrieval_mode: str = "snippet",
         web_fetcher: WebFetcher | None = None,
@@ -119,8 +122,15 @@ class ResearchOrchestrator:
             )
         if min_fetched_content_length < 1:
             raise ValueError("min_fetched_content_length must be at least 1")
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        legacy_timeout = timeout or 120.0
+        resolved_case_timeout = case_timeout or legacy_timeout
+        resolved_task_timeout = task_timeout or legacy_timeout
+        if resolved_case_timeout <= 0:
+            raise ValueError("case_timeout must be positive")
+        if resolved_task_timeout <= 0:
+            raise ValueError("task_timeout must be positive")
+        if report_timeout <= 0:
+            raise ValueError("report_timeout must be positive")
         if final_passage_limit is not None and final_passage_limit < 1:
             raise ValueError("final_passage_limit must be at least 1")
         self.output_dir = output_dir
@@ -134,7 +144,10 @@ class ResearchOrchestrator:
         self.max_concurrency = max_concurrency
         self.retrieval_concurrency = retrieval_concurrency
         self.fetch_concurrency = fetch_concurrency
-        self.timeout = timeout
+        self.timeout = resolved_case_timeout
+        self.case_timeout = resolved_case_timeout
+        self.task_timeout = resolved_task_timeout
+        self.report_timeout = report_timeout
         self.retrieval_mode = retrieval_mode
         self.web_fetcher = web_fetcher
         self.passage_chunker = passage_chunker
@@ -163,9 +176,10 @@ class ResearchOrchestrator:
         fetch_latency_ms = 0.0
         limitations: list[str] = []
         interrupted: BaseException | None = None
+        case_timed_out = False
 
         try:
-            async with asyncio.timeout(self.timeout):
+            async with asyncio.timeout(self.case_timeout):
                 tasks = await self.planner.create_tasks(normalized)
                 budget.consume_task(len(tasks))
                 task_results, sources = await self._research(tasks, budget)
@@ -188,7 +202,8 @@ class ResearchOrchestrator:
                         budget,
                     )
         except TimeoutError:
-            limitations.append(f"global timeout after {self.timeout:g} seconds")
+            case_timed_out = True
+            limitations.append(f"global timeout after {self.case_timeout:g} seconds")
             task_results = self._fill_missing_results(
                 tasks, task_results, "global timeout"
             )
@@ -291,13 +306,16 @@ class ResearchOrchestrator:
                 "记录数据集版本与划分策略。",
             ],
         )
-        await self._write_report(output)
+        if case_timed_out:
+            self._write_fallback_report(output)
+        else:
+            await self._write_report(output)
         all_failed = bool(task_results) and not any(
             item.state == WorkState.COMPLETED for item in task_results
         )
         status = (
             WorkState.FAILED
-            if all_failed or (not tasks and limitations)
+            if case_timed_out or all_failed or (not tasks and limitations)
             else WorkState.COMPLETED
         )
         run = ResearchRun(
@@ -355,7 +373,7 @@ class ResearchOrchestrator:
             for task in tasks
         ]
         scheduler = AsyncTaskScheduler(
-            max_concurrency=self.max_concurrency, task_timeout=self.timeout
+            max_concurrency=self.max_concurrency, task_timeout=self.task_timeout
         )
         outcomes = await scheduler.run(scheduled)
         sources_by_id: dict[str, SourceRecord] = {}
@@ -526,22 +544,29 @@ class ResearchOrchestrator:
 
     async def _write_report(self, output: ResearchOutput) -> None:
         try:
-            report = self.writer.write(output)
-            output.markdown_report = (
-                await report if inspect.isawaitable(report) else report
-            )
+            async with asyncio.timeout(self.report_timeout):
+                report = self.writer.write(output)
+                output.markdown_report = (
+                    await report if inspect.isawaitable(report) else report
+                )
             output.validation = self.writer.last_validation
         except Exception as exc:  # noqa: BLE001 - preserve the run on writer failure
             warning = (
                 f"report writer failed; used fallback: {type(exc).__name__}: {exc}"
             )
             output.limitations.append(warning)
-            fallback = ReportWriter()
-            output.markdown_report = fallback.write(output)
-            output.validation = fallback.last_validation
+            self._write_fallback_report(output)
         if output.limitations and "## 局限性" not in output.markdown_report:
             details = "\n".join(f"- {item}" for item in output.limitations)
             output.markdown_report += f"\n\n## 局限性\n\n{details}\n"
+
+    @staticmethod
+    def _write_fallback_report(output: ResearchOutput) -> None:
+        """Write a deterministic report without invoking an external provider."""
+
+        fallback = ReportWriter()
+        output.markdown_report = fallback.write(output)
+        output.validation = fallback.last_validation
 
     @staticmethod
     def _fill_missing_results(

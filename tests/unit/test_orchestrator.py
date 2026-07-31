@@ -48,6 +48,21 @@ class TwoTaskPlanner:
         ]
 
 
+class SlowPlanner:
+    async def create_tasks(self, question: str) -> list[InquiryTask]:
+        await asyncio.sleep(0.05)
+        return [InquiryTask(id="too-late", question=question)]
+
+
+class RecordingWriter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def write(self, result: object) -> str:
+        self.calls += 1
+        return "external report"
+
+
 class StaticSearchProvider:
     def __init__(self, sources: list[SourceRecord]) -> None:
         self.sources = sources
@@ -171,6 +186,25 @@ async def test_all_tasks_fail_but_run_json_is_saved(tmp_path: Path) -> None:
     assert run.budget.failed_tasks == [f"task-{index}" for index in range(1, 6)]
     assert run.budget.search_calls == 5
     assert (tmp_path / run.run_id / "run.json").exists()
+
+
+async def test_case_timeout_is_failed_and_skips_external_report(
+    tmp_path: Path,
+) -> None:
+    writer = RecordingWriter()
+    run = await ResearchOrchestrator(
+        output_dir=tmp_path,
+        planner=SlowPlanner(),  # type: ignore[arg-type]
+        writer=writer,  # type: ignore[arg-type]
+        case_timeout=0.01,
+        task_timeout=1,
+        report_timeout=1,
+    ).run("timeout")
+
+    assert run.status == WorkState.FAILED
+    assert writer.calls == 0
+    assert "global timeout after 0.01 seconds" in run.output.limitations
+    assert run.output.markdown_report != "external report"
 
 
 async def test_hybrid_fetches_concurrently_and_isolates_failure(tmp_path: Path) -> None:
