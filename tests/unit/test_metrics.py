@@ -1,67 +1,63 @@
-from rec_researcher.core.models import (
-    CitationValidation,
-    SourceRecord,
-    TaskResult,
-    WorkState,
-)
+import math
+
+import pytest
+
+from rec_researcher.core.models import SourceRecord
 from rec_researcher.evaluation.metrics import (
-    average_latency,
+    duplicate_rate,
     mean_reciprocal_rank,
+    ndcg_at_k,
     recall_at_k,
-    report_section_completeness,
     source_diversity,
-    task_success_rate,
-    valid_url_rate,
 )
 
 
-def test_operational_metrics_are_deterministic() -> None:
-    tasks = [
-        TaskResult(task_id="one", state=WorkState.COMPLETED),
-        TaskResult(task_id="two", state=WorkState.FAILED),
-    ]
-    sources = [
-        SourceRecord(
-            id="one",
-            title="One",
-            url="https://one.example/paper",
-            snippet="",
-            provider="fixture",
-        ),
-        SourceRecord(
-            id="two",
-            title="Two",
-            url="https://two.example/paper",
-            snippet="",
-            provider="fixture",
-        ),
-    ]
-    report = "\n".join(
-        [
-            "## 论文与代码对照",
-            "## 数据集与指标",
-            "## 复现难度分析",
-        ]
+def source(identifier: str, url: str) -> SourceRecord:
+    return SourceRecord(
+        id=identifier, title=identifier, url=url, snippet="", provider="fixture"
     )
-
-    assert task_success_rate(tasks) == 0.5
-    assert valid_url_rate(sources) == 1.0
-    assert source_diversity(sources) == 1.0
-    assert report_section_completeness(report) == 0.75
-    assert average_latency([1.0, 3.0]) == 2.0
-    assert CitationValidation(citation_coverage=0.5).citation_coverage == 0.5
 
 
 def test_relevance_metrics_are_null_without_gold_annotations() -> None:
-    retrieved = ["some-returned-url"]
+    retrieved = ["https://returned.example/paper"]
 
-    assert recall_at_k(retrieved, None, k=10) is None
-    assert recall_at_k(retrieved, [], k=10) is None
-    assert mean_reciprocal_rank(retrieved, None) is None
+    assert recall_at_k(retrieved, None, k=3) is None
+    assert recall_at_k(retrieved, {}, k=5) is None
+    assert mean_reciprocal_rank(retrieved, {}) is None
+    assert ndcg_at_k(retrieved, {}, k=5) is None
 
 
-def test_relevance_metrics_use_gold_source_ids() -> None:
-    retrieved = ["irrelevant", "gold-two", "gold-one"]
+def test_graded_ndcg_matches_hand_calculation() -> None:
+    gold = {"https://a.example": 3, "https://b.example": 2, "https://c.example": 1}
+    retrieved = ["https://b.example", "https://missing.example", "https://a.example"]
+    actual_dcg = 3.0 + 7.0 / math.log2(4)
+    ideal_dcg = 7.0 + 3.0 / math.log2(3) + 1.0 / math.log2(4)
 
-    assert recall_at_k(retrieved, ["gold-one", "gold-two"], k=2) == 0.5
-    assert mean_reciprocal_rank(retrieved, ["gold-one", "gold-two"]) == 0.5
+    assert ndcg_at_k(retrieved, gold, k=5) == pytest.approx(actual_dcg / ideal_dcg)
+
+
+def test_mrr_uses_first_relevant_rank() -> None:
+    retrieved = ["https://x.example", "https://b.example", "https://a.example"]
+
+    assert (
+        mean_reciprocal_rank(
+            retrieved, {"https://a.example": 3, "https://b.example": 1}
+        )
+        == 0.5
+    )
+    assert (
+        recall_at_k(retrieved, {"https://a.example": 3, "https://b.example": 1}, k=2)
+        == 0.5
+    )
+
+
+def test_diversity_and_duplicates_are_safe_for_empty_and_repeated_urls() -> None:
+    sources = [
+        source("one", "https://same.example/a"),
+        source("two", "https://same.example/a"),
+    ]
+
+    assert source_diversity([]) == 0.0
+    assert duplicate_rate([]) == 0.0
+    assert source_diversity(sources) == 0.5
+    assert duplicate_rate(sources) == 0.5

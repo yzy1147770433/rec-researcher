@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Sequence
 
@@ -245,6 +246,19 @@ class RetrievalPipeline:
         return RetrievalPipelineResult(
             passages=selected, traces=traces, warnings=warnings, statistics=stats
         )
+
+    async def aclose(self) -> None:
+        """Release provider clients and the root vector-index connection."""
+
+        for resource in (self._embedder, self._reranker, self._vector_index):
+            close = getattr(resource, "aclose", None) or getattr(
+                resource, "close", None
+            )
+            if close is None:
+                continue
+            result = close()
+            if inspect.isawaitable(result):
+                await result
 
     @staticmethod
     def _validate_vectors(vectors: Sequence[Sequence[float]], *, expected: int) -> int:
