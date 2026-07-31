@@ -55,6 +55,11 @@ class PassageRecord(DomainModel):
     start_offset: int = Field(default=0, ge=0)
     end_offset: int = Field(default=0, ge=0)
     content_origin: Literal["fetched", "search_snippet_fallback"] = "fetched"
+    url: str | None = None
+    page_title: str | None = None
+    section_title: str | None = None
+    token_count: int | None = Field(default=None, ge=0)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
     @computed_field
     @property
@@ -98,6 +103,68 @@ class CitationValidation(DomainModel):
     cited_source_count: int = Field(default=0, ge=0)
     available_source_count: int = Field(default=0, ge=0)
     uncited_long_paragraphs: list[str] = Field(default_factory=list)
+
+
+class RewrittenQuery(DomainModel):
+    """A bounded search-query variant with debugging provenance."""
+
+    query: str = Field(min_length=1)
+    query_type: str = Field(min_length=1)
+    priority: float = Field(default=1.0, ge=0.0, le=1.0)
+    reason: str | None = None
+
+
+class SourceQualityScore(DomainModel):
+    """Rule-based source authority score, separate from relevance."""
+
+    authority: float = Field(ge=0.0, le=1.0)
+    originality: float = Field(ge=0.0, le=1.0)
+    domain_relevance: float = Field(ge=0.0, le=1.0)
+    freshness: float = Field(ge=0.0, le=1.0)
+    final_score: float = Field(ge=0.0, le=1.0)
+    reasons: list[str] = Field(default_factory=list)
+
+
+class GoldDocument(DomainModel):
+    """A relevance judgment for one document identity and all accepted locators."""
+
+    document_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    relevance_grade: Literal[1, 2, 3] = 3
+    source_type: str = "primary"
+    accepted_urls: list[HttpUrl] = Field(default_factory=list)
+    doi: str | None = None
+    arxiv_id: str | None = None
+    annotation_note: str | None = None
+
+
+ClaimStatus = Literal[
+    "supported",
+    "partially_supported",
+    "unsupported",
+    "missing_citation",
+    "invalid_citation",
+]
+
+
+class ReportClaim(DomainModel):
+    """One report statement eligible for evidence verification."""
+
+    claim_id: str
+    text: str
+    section: str | None = None
+    citation_ids: list[str] = Field(default_factory=list)
+    requires_evidence: bool = True
+
+
+class ClaimVerificationResult(DomainModel):
+    """Evidence-support judgment for one report claim."""
+
+    claim_id: str
+    status: ClaimStatus
+    confidence: float = Field(ge=0.0, le=1.0)
+    evidence_ids: list[str] = Field(default_factory=list)
+    explanation: str
 
 
 class TaskResult(DomainModel):
@@ -154,6 +221,8 @@ class ResearchOutput(DomainModel):
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     markdown_report: str = ""
     validation: CitationValidation = Field(default_factory=CitationValidation)
+    claims: list[ReportClaim] = Field(default_factory=list)
+    claim_verifications: list[ClaimVerificationResult] = Field(default_factory=list)
     reproduction_suggestions: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     statistics: RunStatistics = Field(default_factory=RunStatistics)

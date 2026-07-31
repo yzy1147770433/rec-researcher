@@ -127,3 +127,31 @@ async def test_rejects_non_html_content() -> None:
 
     assert result.success is False
     assert "non-HTML" in (result.error or "")
+
+
+async def test_extract_text_preserves_heading_and_table() -> None:
+    html = """
+    <article><h2>Results</h2><table><tr><th>Metric</th><th>Score</th></tr>
+    <tr><td>NDCG</td><td>0.42</td></tr></table></article>
+    """
+    result = AsyncWebFetcher._extract_text(html)
+    assert "Results" in result
+    assert "NDCG" in result
+    assert "0.42" in result
+
+
+async def test_extract_pdf_preserves_page_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Page:
+        def extract_text(self) -> str:
+            return "PDF table and equation text"
+
+    class Reader:
+        pages = [Page()]
+
+    monkeypatch.setattr(
+        "rec_researcher.retrieval.fetcher.PdfReader", lambda _: Reader()
+    )
+    result = AsyncWebFetcher._extract_pdf(b"pdf")
+    assert result == "## Page 1\n\nPDF table and equation text"

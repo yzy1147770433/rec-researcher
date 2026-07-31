@@ -24,7 +24,13 @@ from rec_researcher.core.models import (
     WorkState,
 )
 from rec_researcher.evidence.builder import EvidenceBuilder
+from rec_researcher.evidence.claim_verifier import (
+    ClaimEvidenceVerifier,
+    ClaimExtractor,
+    LLMClaimEvidenceVerifier,
+)
 from rec_researcher.planning.planner import ResearchPlanner
+from rec_researcher.planning.query_rewrite import QueryRewriter
 from rec_researcher.providers.base import SearchProvider
 from rec_researcher.providers.mock import (
     MockPassageReranker,
@@ -43,6 +49,7 @@ from rec_researcher.retrieval.pipeline import (
     RetrievalStatistics,
     RetrievalTrace,
 )
+from rec_researcher.retrieval.source_quality import score_source
 from rec_researcher.retrieval.vector_store import InMemoryVectorIndex
 from rec_researcher.workflow.budget import RunBudget
 from rec_researcher.workflow.scheduler import AsyncTaskScheduler, ScheduledTask
@@ -83,6 +90,8 @@ class ResearchOrchestrator:
         min_fetched_content_length: int = 50,
         retrieval_pipeline: RetrievalPipeline | None = None,
         final_passage_limit: int | None = None,
+        query_rewriter: QueryRewriter | None = None,
+        claim_verifier: object | None = None,
     ) -> None:
         """Configure providers and independent workflow/retrieval limits."""
 
@@ -106,19 +115,30 @@ class ResearchOrchestrator:
             raise ValueError("retrieval_concurrency must be at least 1")
         if fetch_concurrency < 1:
             raise ValueError("fetch_concurrency must be at least 1")
-        if retrieval_mode not in {"snippet", "hybrid"}:
-            raise ValueError("retrieval_mode must be 'snippet' or 'hybrid'")
-        if retrieval_mode == "hybrid" and (
-            web_fetcher is None or passage_chunker is None
-        ):
-            raise ValueError("hybrid mode requires a web_fetcher and passage_chunker")
-        if retrieval_mode == "hybrid" and retrieval_pipeline is None:
+        supported_modes = {
+            "snippet",
+            "bm25_only",
+            "dense_only",
+            "hybrid_rrf",
+            "hybrid_rerank",
+            "hybrid_rerank_mmr",
+            "hybrid",
+        }
+        if retrieval_mode not in supported_modes:
+            raise ValueError(f"unsupported retrieval_mode: {retrieval_mode}")
+        uses_pages = retrieval_mode != "snippet"
+        if uses_pages and (web_fetcher is None or passage_chunker is None):
+            raise ValueError(
+                "non-snippet retrieval requires a web_fetcher and passage_chunker"
+            )
+        if uses_pages and retrieval_pipeline is None:
             if mode == "real":
                 raise ValueError("real hybrid mode requires a retrieval_pipeline")
             retrieval_pipeline = RetrievalPipeline(
                 embedder=MockTextEmbedder(),
                 vector_index=InMemoryVectorIndex(),
                 reranker=MockPassageReranker(),
+                mode=retrieval_mode,
             )
         if min_fetched_content_length < 1:
             raise ValueError("min_fetched_content_length must be at least 1")
@@ -157,6 +177,9 @@ class ResearchOrchestrator:
         self.evidence_builder = EvidenceBuilder(
             max_excerpt_length=evidence_excerpt_length
         )
+        self.query_rewriter = query_rewriter or QueryRewriter(max_queries=1)
+        self.claim_extractor = ClaimExtractor()
+        self.claim_verifier = claim_verifier or ClaimEvidenceVerifier()
 
     async def run(self, question: str) -> ResearchRun:
         """Run research with a global deadline and always persist terminal runs."""
@@ -180,7 +203,17 @@ class ResearchOrchestrator:
 
         try:
             async with asyncio.timeout(self.case_timeout):
+                if getattr(self.planner, "language_model", None) is not None:
+                    budget.record_call("llm")
                 tasks = await self.planner.create_tasks(normalized)
+                for task in tasks:
+                    planner_query = (
+                        task.search_queries[0] if task.search_queries else task.question
+                    )
+                    rewritten = self.query_rewriter.rewrite(
+                        f"{normalized} {planner_query}"
+                    )
+                    task.search_queries = [item.query for item in rewritten]
                 budget.consume_task(len(tasks))
                 task_results, sources = await self._research(tasks, budget)
                 fetch_started = time.perf_counter()
@@ -188,7 +221,7 @@ class ResearchOrchestrator:
                     sources, budget
                 )
                 fetch_latency_ms = (time.perf_counter() - fetch_started) * 1000
-                if self.retrieval_mode == "hybrid":
+                if self.retrieval_mode != "snippet":
                     (
                         passages,
                         retrieval_metadata,
@@ -199,6 +232,7 @@ class ResearchOrchestrator:
                         tasks,
                         task_results,
                         passages,
+                        sources,
                         budget,
                     )
         except TimeoutError:
@@ -309,7 +343,25 @@ class ResearchOrchestrator:
         if case_timed_out:
             self._write_fallback_report(output)
         else:
+            if isinstance(self.writer, RealReportWriter):
+                budget.record_call("llm")
             await self._write_report(output)
+        try:
+            output.claims = self.claim_extractor.extract(output.markdown_report)
+            if isinstance(self.claim_verifier, LLMClaimEvidenceVerifier):
+                budget.record_call("llm")
+            verification = self.claim_verifier.verify(
+                output.claims, output.sources, output.evidence
+            )
+            output.claim_verifications = (
+                await verification
+                if inspect.isawaitable(verification)
+                else verification
+            )
+        except Exception as exc:  # noqa: BLE001 - verification is non-fatal
+            output.limitations.append(
+                f"claim verification failed: {type(exc).__name__}: {exc}"
+            )
         all_failed = bool(task_results) and not any(
             item.state == WorkState.COMPLETED for item in task_results
         )
@@ -357,12 +409,34 @@ class ResearchOrchestrator:
 
         async def search(task: InquiryTask) -> list[SourceRecord]:
             async with retrieval_limit:
-                budget.record_call("search")
                 if not task.search_queries:
                     return []
-                return await self.search_provider.search(
-                    task.search_queries[0], limit=self.sources_per_query
-                )
+                found_by_url: dict[str, SourceRecord] = {}
+                query_rrf: dict[str, float] = {}
+                succeeded = 0
+                last_error: Exception | None = None
+                for query in task.search_queries:
+                    budget.record_call("search")
+                    try:
+                        query_results = await self.search_provider.search(
+                            query, limit=self.sources_per_query
+                        )
+                        for rank, source in enumerate(query_results, start=1):
+                            key = normalize_url(str(source.url))
+                            found_by_url.setdefault(key, source)
+                            query_rrf[key] = query_rrf.get(key, 0.0) + 1.0 / (60 + rank)
+                        succeeded += 1
+                    except Exception as exc:  # noqa: BLE001 - isolate rewritten queries
+                        last_error = exc
+                        budget.record_degradation(
+                            f"query failed ({query}): {type(exc).__name__}: {exc}"
+                        )
+                if not succeeded and last_error is not None:
+                    raise last_error
+                return [
+                    source.model_copy(update={"score": query_rrf[url]})
+                    for url, source in found_by_url.items()
+                ]
 
         scheduled = [
             ScheduledTask(
@@ -376,22 +450,42 @@ class ResearchOrchestrator:
             max_concurrency=self.max_concurrency, task_timeout=self.task_timeout
         )
         outcomes = await scheduler.run(scheduled)
-        sources_by_id: dict[str, SourceRecord] = {}
-        sources_by_url: dict[str, SourceRecord] = {}
-        results: list[TaskResult] = []
+        candidates_by_url: dict[str, SourceRecord] = {}
+        task_urls: dict[str, list[str]] = {}
         for outcome in outcomes:
             found = outcome.value or []
-            retained: list[SourceRecord] = []
+            urls: list[str] = []
             for source in found:
                 url_key = normalize_url(str(source.url))
-                if url_key in sources_by_url:
-                    retained.append(sources_by_url[url_key])
-                elif source.id in sources_by_id:
-                    retained.append(sources_by_id[source.id])
-                elif len(sources_by_id) < self.max_sources:
-                    sources_by_id[source.id] = source
-                    sources_by_url[url_key] = source
-                    retained.append(source)
+                urls.append(url_key)
+                current = candidates_by_url.get(url_key)
+                if current is None or (source.score or 0.0) > (current.score or 0.0):
+                    candidates_by_url[url_key] = source
+            task_urls[outcome.task_id] = urls
+
+        maximum_relevance = max(
+            (source.score or 0.0 for source in candidates_by_url.values()),
+            default=1.0,
+        )
+
+        def candidate_score(source: SourceRecord) -> tuple[float, float]:
+            quality = score_source(source).final_score
+            relevance = (source.score or 0.0) / maximum_relevance
+            return (0.7 * relevance + 0.3 * quality, relevance)
+
+        selected = sorted(
+            candidates_by_url.values(), key=candidate_score, reverse=True
+        )[: self.max_sources]
+        selected_by_url = {
+            normalize_url(str(source.url)): source for source in selected
+        }
+        results: list[TaskResult] = []
+        for outcome in outcomes:
+            retained = [
+                selected_by_url[url]
+                for url in task_urls.get(outcome.task_id, [])
+                if url in selected_by_url
+            ]
             if outcome.state == WorkState.COMPLETED:
                 results.append(
                     TaskResult(
@@ -409,8 +503,8 @@ class ResearchOrchestrator:
                         errors=[outcome.error or "task failed"],
                     )
                 )
-        budget.consume_sources(len(sources_by_id))
-        return results, list(sources_by_id.values())
+        budget.consume_sources(len(selected))
+        return results, selected
 
     async def _build_passages(
         self, sources: list[SourceRecord], budget: RunBudget
@@ -455,7 +549,14 @@ class ResearchOrchestrator:
             )
             budget.record_fetch(success=usable)
             if usable:
-                raw_passages.extend(self.passage_chunker.chunk(source.id, outcome.text))
+                raw_passages.extend(
+                    self.passage_chunker.chunk(
+                        source.id,
+                        outcome.text,
+                        url=str(source.url),
+                        page_title=source.title,
+                    )
+                )
                 continue
             reason = outcome.error or "empty or too-short extracted content"
             budget.record_degradation(
@@ -484,6 +585,7 @@ class ResearchOrchestrator:
         tasks: list[InquiryTask],
         task_results: list[TaskResult],
         passages: list[PassageRecord],
+        sources: list[SourceRecord],
         budget: RunBudget,
     ) -> tuple[list[PassageRecord], dict[str, RetrievalTrace], RetrievalStatistics]:
         """Run the existing hybrid pipeline independently for every task."""
@@ -506,6 +608,9 @@ class ResearchOrchestrator:
                 query,
                 task_passages,
                 namespace=f"{run_id}_{task.id}",
+                source_quality={
+                    source.id: score_source(source).final_score for source in sources
+                },
             )
             task_by_id = {passage.id: passage for passage in task_passages}
             selected.extend(task_by_id[item.passage_id] for item in retrieval.passages)
@@ -601,6 +706,20 @@ class ResearchOrchestrator:
         )
         (temporary / "validation.json").write_text(
             run.output.validation.model_dump_json(indent=2), encoding="utf-8"
+        )
+        (temporary / "claim-verification.json").write_text(
+            self._json(
+                {
+                    "claims": [
+                        item.model_dump(mode="json") for item in run.output.claims
+                    ],
+                    "results": [
+                        item.model_dump(mode="json")
+                        for item in run.output.claim_verifications
+                    ],
+                }
+            ),
+            encoding="utf-8",
         )
         (temporary / "run.json").write_text(
             run.model_dump_json(indent=2), encoding="utf-8"

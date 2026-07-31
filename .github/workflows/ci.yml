@@ -29,6 +29,12 @@ jobs:
         run: uv sync --all-groups
       - name: Run Ruff
         run: uv run ruff check .
+      - name: Check tracked files for obvious secrets
+        run: |
+          if git grep -En '(^|[=: "'"'])sk-[A-Za-z0-9_-]{20,}|Authorization: Bearer [A-Za-z0-9]' -- ':!uv.lock'; then
+            echo "Potential committed secret detected"
+            exit 1
+          fi
       - name: Run offline tests
         run: uv run pytest
       - name: Build distributions

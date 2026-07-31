@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from rec_researcher.core.models import PassageRecord
+from rec_researcher.core.settings import RetrievalMode
 from rec_researcher.providers.base import PassageReranker, TextEmbedder, VectorIndex
 from rec_researcher.retrieval.bm25 import BM25Retriever
 from rec_researcher.retrieval.diversity import (
@@ -75,6 +76,9 @@ class RetrievalPipeline:
         mmr_top_k: int = 8,
         rrf_k: int = 60,
         mmr_lambda: float = 0.75,
+        mode: RetrievalMode = "hybrid_rerank_mmr",
+        bm25_top_k: int | None = None,
+        dense_top_k: int | None = None,
     ) -> None:
         self._embedder = embedder
         self._vector_index = vector_index
@@ -84,6 +88,9 @@ class RetrievalPipeline:
         self._mmr_top_k = mmr_top_k
         self._rrf_k = rrf_k
         self._mmr_lambda = mmr_lambda
+        self._mode = "hybrid_rerank_mmr" if mode == "hybrid" else mode
+        self._bm25_top_k = bm25_top_k or retrieval_top_k
+        self._dense_top_k = dense_top_k or retrieval_top_k
 
     async def retrieve(
         self,
@@ -91,6 +98,7 @@ class RetrievalPipeline:
         passages: Sequence[PassageRecord],
         *,
         namespace: str = "isolated",
+        source_quality: dict[str, float] | None = None,
     ) -> RetrievalPipelineResult:
         """Retrieve passages with isolated vector state and visible degradation."""
 
@@ -104,13 +112,23 @@ class RetrievalPipeline:
         by_id = {passage.id: passage for passage in corpus}
         if len(by_id) != len(corpus):
             raise ValueError("passage identifiers must be unique within a task")
-        lexical = BM25Retriever(corpus).search(query, limit=self._retrieval_top_k)
+        use_bm25 = self._mode != "dense_only"
+        use_dense = self._mode != "bm25_only"
+        use_rerank = self._mode in {"hybrid_rerank", "hybrid_rerank_mmr"}
+        use_mmr = self._mode == "hybrid_rerank_mmr"
+        lexical = (
+            BM25Retriever(corpus).search(query, limit=self._bm25_top_k)
+            if use_bm25
+            else []
+        )
         stats.bm25_candidate_count = len(lexical)
         warnings: list[str] = []
         dense = []
 
         embedding_started = time.perf_counter()
         try:
+            if not use_dense:
+                raise _StageDisabled
             stats.embedding_calls += 1
             stats.embedding_text_count += len(corpus)
             passage_vectors = await self._embedder.embed(
@@ -123,6 +141,9 @@ class RetrievalPipeline:
             query_dimension = self._validate_vectors(query_vectors, expected=1)
             if query_dimension != len(passage_vectors[0]):
                 raise ValueError("query and document embedding dimensions differ")
+        except _StageDisabled:
+            passage_vectors = []
+            query_vectors = []
         except Exception as exc:  # noqa: BLE001 - provider degradation boundary
             warning = f"embedding failed; using BM25 only: {type(exc).__name__}: {exc}"
             warnings.append(warning)
@@ -137,9 +158,7 @@ class RetrievalPipeline:
                 scope = getattr(self._vector_index, "scoped", None)
                 scoped = scope(namespace) if scope is not None else self._vector_index
                 await scoped.upsert_passages(corpus, passage_vectors)
-                dense = await scoped.search(
-                    query_vectors[0], limit=self._retrieval_top_k
-                )
+                dense = await scoped.search(query_vectors[0], limit=self._dense_top_k)
             except Exception as exc:  # noqa: BLE001 - storage degradation boundary
                 warning = (
                     f"vector store failed; using BM25 only: {type(exc).__name__}: {exc}"
@@ -172,11 +191,16 @@ class RetrievalPipeline:
             by_id[item.passage_id] for item in fused if item.passage_id in by_id
         ]
         relevance = {item.passage_id: item.score for item in fused}
+        quality = source_quality or {}
+        for passage in candidates:
+            # Quality is a bounded adjustment, not a replacement for relevance.
+            relevance[passage.id] *= 0.75 + 0.25 * quality.get(passage.source_id, 0.5)
+        candidates.sort(key=lambda item: relevance[item.id], reverse=True)
         rerank_scores: dict[str, float] = {}
         ordered = candidates
         selection_stage = "rrf"
 
-        if candidates:
+        if candidates and use_rerank:
             rerank_started = time.perf_counter()
             try:
                 stats.reranker_calls += 1
@@ -212,10 +236,20 @@ class RetrievalPipeline:
             for passage in ordered
         ]
         try:
+            if not use_mmr:
+                raise _StageDisabled
             selected = maximal_marginal_relevance(
                 diversity, top_k=self._mmr_top_k, lambda_=self._mmr_lambda
             )
             final_stage = "mmr"
+        except _StageDisabled:
+            selected = [
+                MMRResult(
+                    **item.model_dump(), rank=index, mmr_score=item.relevance_score
+                )
+                for index, item in enumerate(diversity[: self._mmr_top_k], start=1)
+            ]
+            final_stage = selection_stage
         except Exception as exc:  # noqa: BLE001 - algorithm degradation boundary
             warning = (
                 f"MMR failed; preserving {selection_stage} ranking: "
@@ -272,3 +306,7 @@ class RetrievalPipeline:
         if any(len(vector) != dimension for vector in vectors):
             raise ValueError("embedding dimensions are inconsistent")
         return dimension
+
+
+class _StageDisabled(Exception):
+    """Internal control flow that must not be reported as provider degradation."""

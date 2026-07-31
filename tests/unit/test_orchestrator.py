@@ -250,7 +250,7 @@ async def test_hybrid_fetches_normalized_url_once_and_preserves_source_link(
     assert len(fetcher.calls) == 1
     assert [source.id for source in run.output.sources] == ["first"]
     assert all(passage.source_id == "first" for passage in run.output.passages)
-    assert run.output.task_results[0].source_ids == ["first", "first"]
+    assert run.output.task_results[0].source_ids == ["first"]
 
 
 async def test_empty_body_falls_back_to_snippet(tmp_path: Path) -> None:

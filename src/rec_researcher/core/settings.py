@@ -9,7 +9,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 EmbeddingProvider = Literal["mock", "siliconflow", "none"]
 RerankerProvider = Literal["mock", "siliconflow", "none"]
 VectorStore = Literal["memory", "milvus", "none"]
-RetrievalMode = Literal["snippet", "hybrid"]
+RetrievalMode = Literal[
+    "snippet",
+    "bm25_only",
+    "dense_only",
+    "hybrid_rrf",
+    "hybrid_rerank",
+    "hybrid_rerank_mmr",
+    "hybrid",  # Backwards-compatible alias for the complete pipeline.
+]
 
 
 def _is_configured(value: object) -> bool:
@@ -49,6 +57,7 @@ class Settings(BaseSettings):
     reranker_provider: RerankerProvider = "siliconflow"
     vector_store: VectorStore = "milvus"
     retrieval_mode: RetrievalMode = "snippet"
+    query_rewrite_count: int = Field(default=5, ge=1, le=10)
 
     llm_base_url: str | None = None
     llm_api_key: SecretStr | None = None
@@ -67,10 +76,17 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=150, ge=0)
     rrf_k: int = Field(default=60, ge=1)
     retrieval_top_k: int = Field(default=20, ge=1)
+    bm25_top_k: int = Field(default=20, ge=1)
+    dense_top_k: int = Field(default=20, ge=1)
     rerank_top_k: int = Field(default=10, ge=1)
     mmr_top_k: int = Field(default=8, ge=1)
     mmr_lambda: float = Field(default=0.75, ge=0.0, le=1.0)
     evidence_excerpt_length: int = Field(default=600, ge=1)
+    llm_cost_per_call: float = Field(default=0.0, ge=0.0)
+    search_cost_per_call: float = Field(default=0.0, ge=0.0)
+    embedding_cost_per_call: float = Field(default=0.0, ge=0.0)
+    reranker_cost_per_call: float = Field(default=0.0, ge=0.0)
+    claim_verifier: Literal["deterministic", "llm"] = "deterministic"
 
     def safe_summary(self) -> dict[str, bool]:
         """Return presence flags only, never configuration or secret values."""

@@ -1,0 +1,13 @@
+{
+  "max_tasks": 3,
+  "query_rewrite_count": 5,
+  "max_sources_per_query": 5,
+  "max_total_sources": 30,
+  "max_concurrency": 1,
+  "fetch_concurrency": 1,
+  "claim_verifier": "llm",
+  "request_timeout_seconds": 45,
+  "task_timeout_seconds": 120,
+  "case_timeout_seconds": 180,
+  "report_timeout_seconds": 120
+}

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import hashlib
+import io
 import json
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -12,15 +14,19 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, HttpUrl
+from pydantic import AliasChoices, Field, HttpUrl, model_validator
 
-from rec_researcher.core.models import DomainModel, ResearchRun, WorkState
+from rec_researcher.core.models import DomainModel, GoldDocument, ResearchRun, WorkState
 from rec_researcher.evaluation.metrics import (
     average_latency,
     citation_coverage,
+    document_identity_metrics,
     duplicate_rate,
+    evidence_support_metrics,
+    expected_fact_coverage,
     mean_reciprocal_rank,
     ndcg_at_k,
+    precision_at_k,
     provider_failure_rate,
     recall_at_k,
     report_section_completeness,
@@ -45,14 +51,67 @@ class GoldSource(DomainModel):
 class BenchmarkCase(DomainModel):
     """One versioned, independently executable benchmark case."""
 
-    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
-    question: str = Field(min_length=1)
+    id: str = Field(
+        min_length=1,
+        pattern=r"^[A-Za-z0-9_.-]+$",
+        validation_alias=AliasChoices("id", "case_id"),
+    )
+    question: str = Field(
+        min_length=1, validation_alias=AliasChoices("question", "query")
+    )
     category: str = Field(min_length=1)
-    gold_sources: list[GoldSource]
+    gold_sources: list[GoldSource] = Field(default_factory=list)
+    gold_documents: list[GoldDocument] = Field(default_factory=list)
+    relevant_urls: list[HttpUrl] = Field(default_factory=list)
+    relevant_titles: list[str] = Field(default_factory=list)
+    relevant_dois: list[str] = Field(default_factory=list)
+    relevant_arxiv_ids: list[str] = Field(default_factory=list)
+    relevant_keywords: list[str] = Field(default_factory=list)
+    expected_facts: list[str] = Field(default_factory=list)
+    difficulty: str | None = None
     expected_entities: list[str] | None = None
-    annotation_version: str = Field(min_length=1)
-    annotated_by: str = Field(min_length=1)
-    annotated_at: datetime
+    annotation_version: str = "compatible-v1"
+    annotated_by: str = "unspecified"
+    annotated_at: datetime = Field(default_factory=datetime.now)
+
+    @model_validator(mode="after")
+    def promote_relevant_urls(self) -> BenchmarkCase:
+        """Convert the simple schema into ungraded gold without breaking v0.2."""
+
+        if not self.gold_sources and self.relevant_urls:
+            self.gold_sources = [
+                GoldSource(
+                    title=self.relevant_titles[index]
+                    if index < len(self.relevant_titles)
+                    else str(url),
+                    url=url,
+                    relevance_grade=1,
+                    annotation_note="imported from relevant_urls",
+                )
+                for index, url in enumerate(self.relevant_urls)
+            ]
+        if not self.gold_documents:
+            self.gold_documents = [
+                GoldDocument(
+                    document_id=f"url:{source.url}",
+                    title=source.title,
+                    relevance_grade=source.relevance_grade,
+                    accepted_urls=[source.url],
+                    doi=(
+                        self.relevant_dois[index]
+                        if index < len(self.relevant_dois)
+                        else None
+                    ),
+                    arxiv_id=(
+                        self.relevant_arxiv_ids[index]
+                        if index < len(self.relevant_arxiv_ids)
+                        else None
+                    ),
+                    annotation_note=source.annotation_note,
+                )
+                for index, source in enumerate(self.gold_sources)
+            ]
+        return self
 
 
 class AblationName(StrEnum):
@@ -149,8 +208,26 @@ class CaseMetrics(DomainModel):
     provider_failure_rate: float = Field(ge=0.0, le=1.0)
     recall_at_3: float | None = Field(default=None, ge=0.0, le=1.0)
     recall_at_5: float | None = Field(default=None, ge=0.0, le=1.0)
+    recall_at_10: float | None = Field(default=None, ge=0.0, le=1.0)
+    precision_at_5: float | None = Field(default=None, ge=0.0, le=1.0)
     mrr: float | None = Field(default=None, ge=0.0, le=1.0)
     ndcg_at_5: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence_support_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    partial_support_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    unsupported_claim_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    missing_citation_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    invalid_citation_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    search_calls: int = Field(default=0, ge=0)
+    embedding_calls: int = Field(default=0, ge=0)
+    reranker_calls: int = Field(default=0, ge=0)
+    llm_calls: int = Field(default=0, ge=0)
+    estimated_cost: float = Field(default=0.0, ge=0.0)
+    expected_fact_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
+    document_recall_at_3: float | None = Field(default=None, ge=0.0, le=1.0)
+    document_recall_at_5: float | None = Field(default=None, ge=0.0, le=1.0)
+    document_recall_at_10: float | None = Field(default=None, ge=0.0, le=1.0)
+    document_mrr: float | None = Field(default=None, ge=0.0, le=1.0)
+    document_ndcg_at_5: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class BenchmarkCaseResult(DomainModel):
@@ -239,9 +316,16 @@ class BenchmarkRunner:
         self._write_json(
             self.output_dir / "summary.json", summary.model_dump(mode="json")
         )
+        self._write_json(
+            self.output_dir / "benchmark-results.json",
+            summary.model_dump(mode="json"),
+        )
+        self._write_csv(self.output_dir / "benchmark-results.csv", results)
         self._write_json(self.output_dir / "per_category.json", per_category(results))
-        (self.output_dir / "comparison.md").write_text(
-            comparison_markdown([summary]), encoding="utf-8"
+        markdown = comparison_markdown([summary])
+        (self.output_dir / "comparison.md").write_text(markdown, encoding="utf-8")
+        (self.output_dir / "benchmark-summary.md").write_text(
+            markdown, encoding="utf-8"
         )
         return summary
 
@@ -299,16 +383,42 @@ class BenchmarkRunner:
         try:
             if self.case_executor is None:
                 config = ablation_config(self.ablation)
+                from rec_researcher.core.settings import Settings
+                from rec_researcher.providers.mock import MockWebFetcher
+                from rec_researcher.retrieval.chunker import PassageChunker
+
                 orchestrator = ResearchOrchestrator(
                     output_dir=self.output_dir / "runs" / case.id,
                     mode=self.mode,
-                    retrieval_mode=config.retrieval_mode,
+                    retrieval_mode=self.ablation.value,
+                    web_fetcher=(
+                        MockWebFetcher() if config.retrieval_mode == "hybrid" else None
+                    ),
+                    passage_chunker=(
+                        PassageChunker(Settings())
+                        if config.retrieval_mode == "hybrid"
+                        else None
+                    ),
                 )
                 run = await orchestrator.run(case.question)
             else:
                 run = await self.case_executor(case)
             output = run.output
-            retrieved = [str(source.url) for source in output.sources]
+            sources_by_id = {source.id: source for source in output.sources}
+            ranked_source_ids = list(
+                dict.fromkeys(item.source_id for item in output.evidence)
+            )
+            ranked_sources = [
+                sources_by_id[source_id]
+                for source_id in ranked_source_ids
+                if source_id in sources_by_id
+            ]
+            ranked_sources.extend(
+                source
+                for source in output.sources
+                if source.id not in set(ranked_source_ids)
+            )
+            retrieved = [str(source.url) for source in ranked_sources]
             gold = {
                 str(source.url): source.relevance_grade for source in case.gold_sources
             }
@@ -340,6 +450,29 @@ class BenchmarkRunner:
                 recall_at_5=recall_at_k(retrieved, gold, k=5),
                 mrr=mean_reciprocal_rank(retrieved, gold),
                 ndcg_at_5=ndcg_at_k(retrieved, gold, k=5),
+                recall_at_10=recall_at_k(retrieved, gold, k=10),
+                precision_at_5=precision_at_k(retrieved, gold, k=5),
+                **evidence_support_metrics(output.claim_verifications),
+                search_calls=budget.search_calls,
+                embedding_calls=budget.embedding_calls,
+                reranker_calls=budget.reranker_calls,
+                llm_calls=budget.llm_calls,
+                estimated_cost=(
+                    budget.llm_calls
+                    * float(self.execution_config.get("llm_cost_per_call", 0.0))
+                    + budget.search_calls
+                    * float(self.execution_config.get("search_cost_per_call", 0.0))
+                    + budget.embedding_calls
+                    * float(self.execution_config.get("embedding_cost_per_call", 0.0))
+                    + budget.reranker_calls
+                    * float(self.execution_config.get("reranker_cost_per_call", 0.0))
+                ),
+                expected_fact_coverage=expected_fact_coverage(
+                    output.markdown_report, case.expected_facts
+                ),
+                **document_identity_metrics(
+                    ranked_sources, case.gold_documents, cutoffs=(3, 5, 10)
+                ),
             )
             succeeded = run.status != WorkState.FAILED
             reasons = output.limitations or [
@@ -374,6 +507,26 @@ class BenchmarkRunner:
             json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    @staticmethod
+    def _write_csv(path: Path, results: Sequence[BenchmarkCaseResult]) -> None:
+        buffer = io.StringIO()
+        writer = csv.DictWriter(
+            buffer,
+            fieldnames=["case_id", "question", "category", "success", "failure_reason"],
+        )
+        writer.writeheader()
+        writer.writerows(
+            {
+                "case_id": item.case_id,
+                "question": item.question,
+                "category": item.category,
+                "success": item.success,
+                "failure_reason": item.failure_reason or "",
+            }
+            for item in results
+        )
+        path.write_text(buffer.getvalue(), encoding="utf-8")
+
 
 def _means(results: Sequence[BenchmarkCaseResult]) -> dict[str, float | None]:
     metrics = [
@@ -393,6 +546,24 @@ def _means(results: Sequence[BenchmarkCaseResult]) -> dict[str, float | None]:
         "recall_at_5",
         "mrr",
         "ndcg_at_5",
+        "recall_at_10",
+        "precision_at_5",
+        "evidence_support_rate",
+        "partial_support_rate",
+        "unsupported_claim_rate",
+        "missing_citation_rate",
+        "invalid_citation_rate",
+        "search_calls",
+        "embedding_calls",
+        "reranker_calls",
+        "llm_calls",
+        "estimated_cost",
+        "expected_fact_coverage",
+        "document_recall_at_3",
+        "document_recall_at_5",
+        "document_recall_at_10",
+        "document_mrr",
+        "document_ndcg_at_5",
     )
     means: dict[str, float | None] = {}
     for name in names:
@@ -447,15 +618,17 @@ def comparison_markdown(summaries: Sequence[BenchmarkSummary]) -> str:
         return "null" if value is None else f"{value:.4f}"
 
     rows = [
-        "| Ablation | Recall@5 | MRR | nDCG@5 | Latency (s) | API calls |",
-        "|---|---:|---:|---:|---:|---:|",
+        "<!-- | Ablation | Recall@5 | MRR | nDCG@5 | Latency (s) | API calls | -->",
+        "| Mode | Recall@5 | MRR | nDCG@5 | Diversity | Support Rate | Latency |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for summary in summaries:
         metrics = summary.mean_metrics
         rows.append(
             f"| {summary.ablation.value} | {cell(metrics.get('recall_at_5'))} | "
             f"{cell(metrics.get('mrr'))} | {cell(metrics.get('ndcg_at_5'))} | "
-            f"{cell(metrics.get('latency_seconds'))} | "
-            f"{cell(metrics.get('provider_calls'))} |"
+            f"{cell(metrics.get('source_diversity'))} | "
+            f"{cell(metrics.get('evidence_support_rate'))} | "
+            f"{cell(metrics.get('latency_seconds'))} |"
         )
     return "\n".join(rows) + "\n"

@@ -6,7 +6,8 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-RecResearcher is a lightweight research agent for recommender-system technical
+RecResearcher is a verifiable Deep Research Agent for recommender systems,
+search algorithms, and large-language-model research. It is a lightweight agent for
 investigation and paper-reproduction analysis. It turns a question into a
 source-linked report through bounded asynchronous search, hybrid retrieval,
 domain analysis, and deterministic citation validation.
@@ -39,19 +40,21 @@ hybrid` path. Snippet mode takes the direct `Search → Evidence` shortcut.
 ```mermaid
 flowchart LR
     CLI[CLI] --> Planner[Planner]
-    Planner --> Search[Search]
+    Planner --> Rewrite[Query Rewrite]
+    Rewrite --> Search[Search]
     Search --> Fetch[Fetch]
     Fetch --> Chunk[Chunk + Dedup]
     Chunk --> BM25[BM25]
     Chunk --> Dense[Embedding + Milvus]
     BM25 --> RRF[Weighted RRF]
     Dense --> RRF
-    RRF --> Rerank[Rerank]
+    RRF --> Quality[Source Quality]
+    Quality --> Rerank[Rerank]
     Rerank --> MMR[MMR]
     MMR --> Evidence[Evidence]
     Evidence --> Domain[Domain Analysis]
     Domain --> Report[Report]
-    Report --> Verify[Verify]
+    Report --> Verify[Claim-level Evidence Verify]
 ```
 
 Planning and search tasks run with bounded `asyncio` concurrency, source and
@@ -145,8 +148,10 @@ page contents, latency, and generated text are not deterministic.
    index; real mode can select Milvus Lite or the in-memory index.
 3. **Weighted RRF** merges lexical and dense ranks without treating their raw
    scores as directly comparable.
-4. **Reranker** rescores the fused candidate texts against the question.
-5. **MMR** selects a compact evidence set by balancing relevance, token-Jaccard
+4. **Source quality** independently scores authority, originality, domain
+   relevance, and freshness; it adjusts relevance without banning blogs.
+5. **Reranker** rescores the adjusted candidate texts against the question.
+6. **MMR** selects a compact evidence set by balancing relevance, token-Jaccard
    redundancy, and a same-source penalty.
 
 Degradation is explicit and recorded in run warnings. A failed or unusable page
@@ -184,7 +189,8 @@ artifact format, not a guaranteed result for a future run:
 - [Sample run summary](docs/demo/sample-run-summary.json)
 
 A normal run writes `report.md`, `sources.json`, `evidence.json`,
-`validation.json`, and `run.json` under `outputs/<run-id>/`.
+`claim-verification.json`, `validation.json`, and `run.json` under
+`outputs/<run-id>/`.
 
 ## Experiments and ablations
 
@@ -201,8 +207,13 @@ uv run rec-researcher benchmark examples/bench/smoke5.jsonl \
   --mode mock --retrieval-mode snippet --max-concurrency 3
 
 uv run rec-researcher benchmark examples/bench/smoke5.jsonl \
-  --mode mock --retrieval-mode hybrid --max-concurrency 3
+  --mode mock --retrieval-mode hybrid_rerank_mmr --max-concurrency 3
 ```
+
+`--retrieval-mode` accepts `snippet`, `bm25_only`, `dense_only`, `hybrid_rrf`,
+`hybrid_rerank`, and `hybrid_rerank_mmr`; legacy `hybrid` aliases the complete
+pipeline. Benchmark runs write `benchmark-results.json`,
+`benchmark-results.csv`, and `benchmark-summary.md`, and support `--resume`.
 
 The evaluation library defines named stage ablations; the current CLI exposes
 the snippet and complete hybrid configurations. Cases without human
@@ -220,8 +231,37 @@ EvidenceRecord -> PassageRecord -> source_id
 
 The verifier detects unknown or missing labels, numbering gaps, duplicate
 references, uncited main sections, and URL/registry mismatches. A validation
-result of `true` means these structural checks passed; it does not prove factual
-truth, freshness, source quality, or source independence.
+result of `true` means these structural checks passed. A second deterministic
+claim-level verifier reports `supported`, `partially_supported`, `unsupported`,
+`missing_citation`, or `invalid_citation`. Lexical support is auditable but is
+not proof of truth or freshness.
+
+## CLI retrieval controls
+
+`run` supports `--retrieval-mode`, `--vector-store`, `--max-concurrency`,
+`--retrieval-concurrency`, `--fetch-concurrency`, `--top-k`,
+`--rerank-top-k`, `--mmr-lambda`, and `--output-dir`. `benchmark` additionally
+supports `--resume`. JSON/TOML `--config`, `--mock`, `--concurrency`, and the
+root `--benchmark PATH` shortcut are supported. Never commit `.env` or API keys.
+
+Run all six modes with one dataset and configuration:
+
+```bash
+uv run rec-researcher ablate examples/bench/research30.v1.jsonl \
+  --mock --concurrency 3 --output-dir outputs/ablations/research30
+```
+
+The versioned 30-case set covers recommendation, search, and LLM/RAG topics
+with primary-source URLs and expected facts. Set `REC_CLAIM_VERIFIER=llm` for
+one bounded batch entailment request per report; timeout, malformed output, or
+provider failure falls back to deterministic verification. Optional
+`REC_*_COST_PER_CALL` settings provide an explicit benchmark cost model.
+
+Benchmarks report both strict URL metrics and document-identity metrics. The
+latter match DOI, arXiv ID, pre-annotated URL aliases, and conservative long
+title equivalence, so mirrors do not become false negatives. Retrieval metrics
+follow final evidence source order. Real search combines Tavily with a
+failure-isolated Crossref channel only for explicit paper/DOI queries.
 
 ## Troubleshooting
 
@@ -284,10 +324,11 @@ tests require explicit credentials and opt-in selection with `-m network` or
 
 ## Current limitations
 
-- PDF extraction, tables, equations, appendices, and other structured document
-  content have limited support; binary PDFs commonly fall back to snippets.
-- Citation validation checks report structure and source mappings, not factual
-  correctness, freshness, or source independence.
+- Text PDFs are extracted page by page, while HTML headings and tables are
+  retained as Markdown where possible. Scanned PDFs, complex equations, and
+  layout reconstruction remain limited.
+- LLM entailment is optional and bounded; deterministic lexical verification
+  remains the offline implementation and failure fallback.
 - Real network runs are non-deterministic and depend on provider availability,
   rate limits, search indexes, and mutable pages.
 - The checked-in human benchmark is small, so its outputs are regression aids,

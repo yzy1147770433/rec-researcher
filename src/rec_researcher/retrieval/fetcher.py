@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from io import BytesIO
 from urllib.parse import urlsplit
 
 import httpx
 import trafilatura
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict
+from pypdf import PdfReader
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
 from rec_researcher.core.models import SourceRecord
@@ -18,7 +20,6 @@ from rec_researcher.core.settings import Settings
 _RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 _BINARY_TYPES = (
     "application/octet-stream",
-    "application/pdf",
     "audio/",
     "image/",
     "video/",
@@ -100,12 +101,20 @@ class AsyncWebFetcher:
                     source_id, url, f"HTTP status {response.status_code}", response
                 )
             content_type = response.headers.get("content-type", "").lower()
+            is_pdf = "application/pdf" in content_type or url.casefold().endswith(
+                ".pdf"
+            )
             if any(marker in content_type for marker in _BINARY_TYPES):
                 return self._failure(
                     source_id, url, f"binary content type: {content_type}", response
                 )
-            if content_type and not any(
-                marker in content_type for marker in ("text/html", "application/xhtml")
+            if (
+                content_type
+                and not is_pdf
+                and not any(
+                    marker in content_type
+                    for marker in ("text/html", "application/xhtml")
+                )
             ):
                 return self._failure(
                     source_id, url, f"non-HTML content type: {content_type}", response
@@ -122,8 +131,21 @@ class AsyncWebFetcher:
                     return self._failure(
                         source_id, url, "response body too large", response
                     )
-            html = bytes(body).decode(response.encoding or "utf-8", errors="replace")
-            text = self._extract_text(html)
+            if is_pdf:
+                try:
+                    text = self._extract_pdf(bytes(body))
+                except Exception as exc:  # noqa: BLE001 - malformed PDF is isolated
+                    return self._failure(
+                        source_id,
+                        url,
+                        f"PDF extraction failed: {type(exc).__name__}",
+                        response,
+                    )
+            else:
+                html = bytes(body).decode(
+                    response.encoding or "utf-8", errors="replace"
+                )
+                text = self._extract_text(html)
             return FetchResult(
                 source_id=source_id,
                 url=url,
@@ -139,7 +161,10 @@ class AsyncWebFetcher:
             return ""
         try:
             extracted = trafilatura.extract(
-                html, include_comments=False, include_tables=False, output_format="txt"
+                html,
+                include_comments=False,
+                include_tables=True,
+                output_format="markdown",
             )
         except Exception:  # trafilatura exposes multiple parser-specific failures
             extracted = None
@@ -149,6 +174,18 @@ class AsyncWebFetcher:
         for unwanted in soup(["script", "style", "noscript"]):
             unwanted.decompose()
         return soup.get_text("\n", strip=True)
+
+    @staticmethod
+    def _extract_pdf(content: bytes) -> str:
+        """Extract bounded page text from a PDF while preserving page boundaries."""
+
+        reader = PdfReader(BytesIO(content))
+        pages = []
+        for index, page in enumerate(reader.pages, start=1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                pages.append(f"## Page {index}\n\n{text}")
+        return "\n\n".join(pages)
 
     @staticmethod
     def _failure(

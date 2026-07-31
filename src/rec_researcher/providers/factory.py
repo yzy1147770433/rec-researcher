@@ -21,6 +21,10 @@ from rec_researcher.providers.base import (
     TextEmbedder,
     VectorIndex,
 )
+from rec_researcher.providers.crossref import (
+    CompositeSearchProvider,
+    CrossrefSearchProvider,
+)
 from rec_researcher.providers.llm_http import OpenAICompatibleLanguageModel
 from rec_researcher.providers.mock import (
     MockLanguageModel,
@@ -113,7 +117,12 @@ class ProviderFactory:
         if self.selection.mode == "mock":
             return MockSearchProvider()
         self._require(tavily_api_key=self.settings.tavily_api_key)
-        return TavilySearchProvider(self.settings)
+        return CompositeSearchProvider(
+            [
+                CrossrefSearchProvider(timeout=self.settings.request_timeout_seconds),
+                TavilySearchProvider(self.settings),
+            ]
+        )
 
     def create_text_embedder(self) -> TextEmbedder | None:
         """Create the explicitly selected embedder, or return ``None``."""
@@ -181,6 +190,9 @@ class ProviderFactory:
             mmr_top_k=self.settings.mmr_top_k,
             rrf_k=self.settings.rrf_k,
             mmr_lambda=self.settings.mmr_lambda,
+            mode=self.selection.retrieval_mode,
+            bm25_top_k=self.settings.bm25_top_k,
+            dense_top_k=self.settings.dense_top_k,
         )
 
     def _validate_hybrid_configuration(self) -> None:

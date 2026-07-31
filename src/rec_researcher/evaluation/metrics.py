@@ -9,6 +9,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from rec_researcher.core.models import (
     CitationValidation,
+    ClaimVerificationResult,
+    GoldDocument,
     SourceRecord,
     TaskResult,
     WorkState,
@@ -128,6 +130,66 @@ def recall_at_k(
     return len(retrieved & gold) / len(gold)
 
 
+def precision_at_k(
+    retrieved_urls: Sequence[str],
+    gold_relevance: Mapping[str, int] | None,
+    *,
+    k: int,
+) -> float | None:
+    """Compute Precision@K over the returned prefix (not padded results)."""
+
+    if k < 1:
+        raise ValueError("k must be at least 1")
+    if not gold_relevance:
+        return None
+    prefix = retrieved_urls[:k]
+    if not prefix:
+        return 0.0
+    gold = {_canonical_url(url) for url in gold_relevance}
+    relevant = sum(_canonical_url(url) in gold for url in prefix)
+    return relevant / len(prefix)
+
+
+def evidence_support_metrics(
+    results: Sequence[ClaimVerificationResult],
+) -> dict[str, float]:
+    """Return mutually interpretable claim-level status rates."""
+
+    if not results:
+        return {
+            "evidence_support_rate": 0.0,
+            "partial_support_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "missing_citation_rate": 0.0,
+            "invalid_citation_rate": 0.0,
+        }
+    total = len(results)
+    names = {
+        "supported": "evidence_support_rate",
+        "partially_supported": "partial_support_rate",
+        "unsupported": "unsupported_claim_rate",
+        "missing_citation": "missing_citation_rate",
+        "invalid_citation": "invalid_citation_rate",
+    }
+    return {
+        metric: sum(item.status == status for item in results) / total
+        for status, metric in names.items()
+    }
+
+
+def expected_fact_coverage(report: str, expected_facts: Sequence[str]) -> float | None:
+    """Measure exact normalized expected-fact presence when annotations exist."""
+
+    if not expected_facts:
+        return None
+    normalized_report = " ".join(report.casefold().split())
+    matched = sum(
+        " ".join(fact.casefold().split()) in normalized_report
+        for fact in expected_facts
+    )
+    return matched / len(expected_facts)
+
+
 def mean_reciprocal_rank(
     retrieved_urls: Sequence[str], gold_relevance: Mapping[str, int] | None
 ) -> float | None:
@@ -166,3 +228,108 @@ def ndcg_at_k(
 
     ideal_dcg = dcg(ideal)
     return dcg(actual) / ideal_dcg if ideal_dcg else 0.0
+
+
+_ARXIV_RE = re.compile(r"(?:arxiv\.org/(?:abs|pdf)/|arxiv[:.])(\d{4}\.\d{4,5})", re.I)
+_DOI_RE = re.compile(r"(?:doi\.org/|doi:\s*)(10\.\d{4,9}/[^\s?#]+)", re.I)
+_TITLE_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _arxiv_id(value: str) -> str | None:
+    match = _ARXIV_RE.search(value)
+    return match.group(1).casefold() if match else None
+
+
+def _doi(value: str) -> str | None:
+    match = _DOI_RE.search(value)
+    return match.group(1).rstrip("./").casefold() if match else None
+
+
+def _title_tokens(value: str) -> set[str]:
+    return {
+        token for token in _TITLE_TOKEN_RE.findall(value.casefold()) if len(token) > 1
+    }
+
+
+def _same_document(source: SourceRecord, gold: GoldDocument) -> bool:
+    """Match stable identifiers first and conservative long-title overlap last."""
+
+    url = str(source.url)
+    accepted = {_canonical_url(item) for item in gold.accepted_urls}
+    if _canonical_url(url) in accepted:
+        return True
+    source_arxiv = _arxiv_id(url + " " + source.title)
+    if gold.arxiv_id and source_arxiv == gold.arxiv_id.casefold():
+        return True
+    if source_arxiv and source_arxiv == _arxiv_id(gold.document_id):
+        return True
+    source_doi = _doi(url + " " + source.title)
+    if gold.doi and source_doi == gold.doi.casefold():
+        return True
+    if source_doi and source_doi == _doi(gold.document_id):
+        return True
+    gold_tokens = _title_tokens(gold.title)
+    source_tokens = _title_tokens(source.title)
+    if len(gold_tokens) < 5:
+        return False
+    containment = len(gold_tokens & source_tokens) / len(gold_tokens)
+    return containment >= 0.8
+
+
+def document_identity_metrics(
+    retrieved: Sequence[SourceRecord],
+    gold_documents: Sequence[GoldDocument],
+    *,
+    cutoffs: Sequence[int] = (3, 5, 10),
+) -> dict[str, float | None]:
+    """Compute document-level metrics without counting URL aliases as new gold."""
+
+    names = {k: f"document_recall_at_{k}" for k in cutoffs}
+    if not gold_documents:
+        return {
+            **{name: None for name in names.values()},
+            "document_mrr": None,
+            "document_ndcg_at_5": None,
+        }
+    matched_by_rank: list[GoldDocument | None] = []
+    seen: set[str] = set()
+    for source in retrieved:
+        match = next(
+            (
+                gold
+                for gold in gold_documents
+                if gold.document_id not in seen and _same_document(source, gold)
+            ),
+            None,
+        )
+        matched_by_rank.append(match)
+        if match is not None:
+            seen.add(match.document_id)
+    result: dict[str, float | None] = {}
+    for cutoff, name in names.items():
+        found = {
+            item.document_id for item in matched_by_rank[:cutoff] if item is not None
+        }
+        result[name] = len(found) / len(gold_documents)
+    first = next(
+        (
+            rank
+            for rank, item in enumerate(matched_by_rank, start=1)
+            if item is not None
+        ),
+        None,
+    )
+    result["document_mrr"] = 1.0 / first if first is not None else 0.0
+    actual = [
+        item.relevance_grade if item is not None else 0 for item in matched_by_rank[:5]
+    ]
+    ideal = sorted((item.relevance_grade for item in gold_documents), reverse=True)[:5]
+
+    def dcg(grades: Sequence[int]) -> float:
+        return sum(
+            (2**grade - 1) / math.log2(rank + 1)
+            for rank, grade in enumerate(grades, start=1)
+        )
+
+    result["document_ndcg_at_5"] = dcg(actual) / dcg(ideal) if ideal else 0.0
+    return result

@@ -6,7 +6,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-RecResearcher 是一个面向推荐系统技术调研和论文复现分析的轻量 Research Agent。它通过
+RecResearcher 是一个面向推荐系统、搜索算法和大模型领域的可验证 Deep Research Agent。它通过
 有界异步搜索、混合检索、领域分析和确定性引用校验，将研究问题转换为来源可追溯的报告。
 
 项目采用 `src/` 布局、Pydantic v2 模型、Protocol Provider 边界和原生
@@ -32,19 +32,21 @@ RecResearcher 是一个面向推荐系统技术调研和论文复现分析的轻
 ```mermaid
 flowchart LR
     CLI[CLI] --> Planner[Planner]
-    Planner --> Search[Search]
+    Planner --> Rewrite[Query Rewrite]
+    Rewrite --> Search[Search]
     Search --> Fetch[Fetch]
     Fetch --> Chunk[Chunk + Dedup]
     Chunk --> BM25[BM25]
     Chunk --> Dense[Embedding + Milvus]
     BM25 --> RRF[Weighted RRF]
     Dense --> RRF
-    RRF --> Rerank[Rerank]
+    RRF --> Quality[Source Quality]
+    Quality --> Rerank[Rerank]
     Rerank --> MMR[MMR]
     MMR --> Evidence[Evidence]
     Evidence --> Domain[Domain Analysis]
     Domain --> Report[Report]
-    Report --> Verify[Verify]
+    Report --> Verify[Claim Evidence Verify]
 ```
 
 Planner 和 Search 使用有界 `asyncio` 并发，并受任务数、来源数和超时预算约束。即使
@@ -164,7 +166,7 @@ RecResearcher 不只是汇总网页，还会执行推荐系统领域分析：
 - [示例运行摘要](docs/demo/sample-run-summary.json)
 
 普通运行会在 `outputs/<run-id>/` 下写入 `report.md`、`sources.json`、`evidence.json`、
-`validation.json` 和 `run.json`。
+`claim-verification.json`、`validation.json` 和 `run.json`。
 
 ## 实验与消融
 
@@ -180,12 +182,29 @@ uv run rec-researcher benchmark examples/bench/smoke5.jsonl \
   --mode mock --retrieval-mode snippet --max-concurrency 3
 
 uv run rec-researcher benchmark examples/bench/smoke5.jsonl \
-  --mode mock --retrieval-mode hybrid --max-concurrency 3
+  --mode mock --retrieval-mode hybrid_rerank_mmr --max-concurrency 3
 ```
 
-评测库定义了具名阶段消融；当前 CLI 直接暴露 snippet 和完整 hybrid 两种配置。没有人工
+CLI 支持 `snippet`、`bm25_only`、`dense_only`、`hybrid_rrf`、
+`hybrid_rerank` 和 `hybrid_rerank_mmr` 六种真实阶段配置；`hybrid` 保留为完整链路别名。
+Benchmark 会输出 JSON、CSV 和 Markdown，并支持 `--resume`。没有人工
 `gold_source_ids` 的 case 会将依赖相关性标注的指标写为 `null`，不会制造标签。详见
 [评测方法](docs/evaluation.md)和 [benchmark 协议](docs/benchmark-v0.2.md)。
+
+统一运行六种消融：
+
+```bash
+uv run rec-researcher ablate examples/bench/research30.v1.jsonl \
+  --mock --concurrency 3 --output-dir outputs/ablations/research30
+```
+
+`--config` 支持 JSON/TOML，`--mock`、`--concurrency` 和根级
+`--benchmark PATH` 是兼容入口。设置 `REC_CLAIM_VERIFIER=llm` 可启用单次批量
+LLM entailment；超时、解析错误或 Provider 失败会回退到确定性校验。
+
+Benchmark 同时报告严格 URL 指标和 Document Identity 指标。后者通过 DOI、arXiv ID、
+预先标注的 URL aliases 与保守的长标题匹配识别同一论文，并按最终 Evidence 来源顺序
+计算。真实搜索仅对明确的论文/DOI 查询启用可失败降级的 Crossref 通道。
 
 ## Evidence 与 Citation 校验
 
@@ -196,8 +215,9 @@ EvidenceRecord -> PassageRecord -> source_id
 ```
 
 校验器检查未知或缺失编号、编号断档、重复 References、主要章节无引用，以及 URL 与来源
-注册表不一致。`valid: true` 只表示这些结构检查通过，不证明事实真实、内容新鲜、来源优质
-或来源相互独立。
+注册表不一致。Claim-level 校验器另行输出 `supported`、`partially_supported`、
+`unsupported`、`missing_citation` 和 `invalid_citation`。当前词项支持判断可审计，但
+不等于事实真实性或时效性证明。
 
 ## Troubleshooting
 
@@ -254,8 +274,9 @@ uv build
 
 ## 当前限制
 
-- PDF、表格、公式、附录等结构化内容解析能力有限；二进制 PDF 通常回退到 snippet。
-- 引用校验只检查报告结构和来源映射，不等于事实验证，也不验证时效性或来源独立性。
+- 文本 PDF 按页抽取，HTML 标题与表格尽量保留为 Markdown；扫描 PDF、复杂公式和版面
+  重建仍可能降级到 snippet。
+- Claim 校验支持可选的批量 LLM entailment，并保留确定性离线实现作为失败降级。
 - 真实网络运行非确定性，受 Provider 可用性、限流、搜索索引和网页变化影响。
 - 仓库中的人工 benchmark 规模较小，其输出只适合回归参考，不能代表广泛的研究质量或
   性能结论。

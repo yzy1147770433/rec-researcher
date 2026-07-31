@@ -1,6 +1,8 @@
 """Command-line interface for local project diagnostics."""
 
 import asyncio
+import json
+import tomllib
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Annotated, Literal
@@ -21,8 +23,12 @@ from rec_researcher.evaluation.runner import (
     AblationName,
     BenchmarkCase,
     BenchmarkRunner,
+    BenchmarkSummary,
+    comparison_markdown,
 )
+from rec_researcher.evidence.claim_verifier import LLMClaimEvidenceVerifier
 from rec_researcher.planning.planner import ResearchPlanner
+from rec_researcher.planning.query_rewrite import QueryRewriter
 from rec_researcher.providers.factory import ProviderFactory
 from rec_researcher.providers.mock import MockWebFetcher
 from rec_researcher.reporting.writer import RealReportWriter
@@ -31,6 +37,61 @@ from rec_researcher.retrieval.fetcher import AsyncWebFetcher
 from rec_researcher.workflow.orchestrator import ResearchOrchestrator
 
 app = typer.Typer(no_args_is_help=True, help="Research recommender-system questions.")
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    benchmark_path: Annotated[
+        Path | None,
+        typer.Option("--benchmark", help="Compatibility shortcut for benchmark."),
+    ] = None,
+) -> None:
+    """Dispatch the optional legacy benchmark shortcut."""
+
+    if benchmark_path is None or ctx.invoked_subcommand is not None:
+        return
+    benchmark(
+        benchmark_path=benchmark_path,
+        mode="mock",
+        output_dir=None,
+        max_concurrency=3,
+        retrieval_mode="snippet",
+        request_timeout=None,
+        task_timeout=None,
+        case_timeout=None,
+        report_timeout=None,
+        max_retries=None,
+        vector_store=None,
+        retrieval_concurrency=None,
+        fetch_concurrency=None,
+        resume=False,
+        config=None,
+        mock=True,
+    )
+
+
+def _settings_from_file(path: Path | None) -> Settings:
+    """Load JSON or TOML settings while retaining environment defaults."""
+
+    settings = Settings()
+    if path is None:
+        return settings
+    try:
+        raw = path.read_text(encoding="utf-8")
+        payload = (
+            tomllib.loads(raw) if path.suffix.casefold() == ".toml" else json.loads(raw)
+        )
+        if not isinstance(payload, dict):
+            raise ValueError("configuration root must be an object")
+        values = payload.get("rec_researcher", payload)
+        if not isinstance(values, dict):
+            raise ValueError("rec_researcher configuration must be an object")
+        merged = settings.model_dump()
+        merged.update(values)
+        return Settings.model_validate(merged)
+    except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+        raise typer.BadParameter(f"invalid config file {path}: {exc}") from exc
 
 
 @app.command()
@@ -67,10 +128,16 @@ def benchmark(
         int | None, typer.Option("--fetch-concurrency", min=1)
     ] = None,
     resume: Annotated[bool, typer.Option("--resume")] = False,
+    config: Annotated[Path | None, typer.Option("--config")] = None,
+    mock: Annotated[
+        bool, typer.Option("--mock", help="Alias for --mode mock.")
+    ] = False,
 ) -> None:
     """Run a failure-isolated lightweight benchmark."""
 
-    settings = Settings()
+    settings = _settings_from_file(config)
+    if mock:
+        mode = "mock"
     updates: dict[str, object] = {}
     if request_timeout is not None:
         updates["request_timeout_seconds"] = request_timeout
@@ -110,11 +177,11 @@ def benchmark(
                 search = case_factory.create_search_provider()
                 pipeline = case_factory.create_retrieval_pipeline()
                 fetcher = (
-                    AsyncWebFetcher(settings) if retrieval_mode == "hybrid" else None
+                    AsyncWebFetcher(settings) if retrieval_mode != "snippet" else None
                 )
                 orchestrator = ResearchOrchestrator(
                     output_dir=destination / "runs" / case_id,
-                    planner=ResearchPlanner(llm),
+                    planner=ResearchPlanner(llm, max_tasks=settings.max_tasks),
                     search_provider=search,
                     writer=RealReportWriter(llm),
                     mode="real",
@@ -133,9 +200,19 @@ def benchmark(
                     retrieval_mode=retrieval_mode,
                     web_fetcher=fetcher,
                     passage_chunker=(
-                        PassageChunker(settings) if retrieval_mode == "hybrid" else None
+                        PassageChunker(settings)
+                        if retrieval_mode != "snippet"
+                        else None
                     ),
                     retrieval_pipeline=pipeline,
+                    query_rewriter=QueryRewriter(
+                        max_queries=settings.query_rewrite_count
+                    ),
+                    claim_verifier=(
+                        LLMClaimEvidenceVerifier(llm)
+                        if settings.claim_verifier == "llm"
+                        else None
+                    ),
                 )
                 try:
                     return await orchestrator.run(question)
@@ -150,9 +227,9 @@ def benchmark(
                 max_concurrency=max_concurrency,
                 case_executor=case_executor,
                 ablation=(
-                    AblationName.SNIPPET
-                    if retrieval_mode == "snippet"
-                    else AblationName.HYBRID_RERANK_MMR
+                    AblationName.HYBRID_RERANK_MMR
+                    if retrieval_mode == "hybrid"
+                    else AblationName(retrieval_mode)
                 ),
                 resume=resume,
                 execution_config={
@@ -181,6 +258,10 @@ def benchmark(
                     "mmr_top_k": settings.mmr_top_k,
                     "rrf_k": settings.rrf_k,
                     "mmr_lambda": settings.mmr_lambda,
+                    "llm_cost_per_call": settings.llm_cost_per_call,
+                    "search_cost_per_call": settings.search_cost_per_call,
+                    "embedding_cost_per_call": settings.embedding_cost_per_call,
+                    "reranker_cost_per_call": settings.reranker_cost_per_call,
                 },
             ).run(benchmark_path)
         )
@@ -247,10 +328,36 @@ def run(
     vector_store: Annotated[
         VectorStore, typer.Option("--vector-store", help="Vector index backend.")
     ] = "milvus",
+    top_k: Annotated[int | None, typer.Option("--top-k", min=1)] = None,
+    rerank_top_k: Annotated[int | None, typer.Option("--rerank-top-k", min=1)] = None,
+    mmr_lambda: Annotated[
+        float | None, typer.Option("--mmr-lambda", min=0.0, max=1.0)
+    ] = None,
+    config: Annotated[Path | None, typer.Option("--config")] = None,
+    mock: Annotated[
+        bool, typer.Option("--mock", help="Alias for --mode mock.")
+    ] = False,
+    concurrency: Annotated[int | None, typer.Option("--concurrency", min=1)] = None,
 ) -> None:
     """Run the research workflow."""
 
-    settings = Settings()
+    settings = _settings_from_file(config).model_copy(
+        update={
+            key: value
+            for key, value in {
+                "retrieval_top_k": top_k,
+                "bm25_top_k": top_k,
+                "dense_top_k": top_k,
+                "rerank_top_k": rerank_top_k,
+                "mmr_lambda": mmr_lambda,
+            }.items()
+            if value is not None
+        }
+    )
+    if mock:
+        mode = "mock"
+    if concurrency is not None:
+        max_concurrency = concurrency
     try:
         if mode == "real":
             provider_settings = (
@@ -271,12 +378,12 @@ def run(
             search = factory.create_search_provider()
             fetcher = (
                 AsyncWebFetcher(provider_settings)
-                if retrieval_mode == "hybrid"
+                if retrieval_mode != "snippet"
                 else None
             )
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
-                planner=ResearchPlanner(llm),
+                planner=ResearchPlanner(llm, max_tasks=settings.max_tasks),
                 search_provider=search,
                 writer=RealReportWriter(llm),
                 mode="real",
@@ -294,10 +401,16 @@ def run(
                 web_fetcher=fetcher,
                 passage_chunker=(
                     PassageChunker(provider_settings)
-                    if retrieval_mode == "hybrid"
+                    if retrieval_mode != "snippet"
                     else None
                 ),
                 retrieval_pipeline=factory.create_retrieval_pipeline(),
+                query_rewriter=QueryRewriter(max_queries=settings.query_rewrite_count),
+                claim_verifier=(
+                    LLMClaimEvidenceVerifier(llm)
+                    if settings.claim_verifier == "llm"
+                    else None
+                ),
             )
 
             async def run_real() -> object:
@@ -312,9 +425,10 @@ def run(
             factory = ProviderFactory(
                 settings, mode="mock", retrieval_mode=retrieval_mode
             )
-            fetcher = MockWebFetcher() if retrieval_mode == "hybrid" else None
+            fetcher = MockWebFetcher() if retrieval_mode != "snippet" else None
             orchestrator = ResearchOrchestrator(
                 output_dir=output_dir or settings.output_dir,
+                planner=ResearchPlanner(max_tasks=settings.max_tasks),
                 max_tasks=settings.max_tasks,
                 max_sources=max_sources or settings.max_total_sources,
                 sources_per_query=settings.max_sources_per_query,
@@ -326,9 +440,10 @@ def run(
                 retrieval_mode=retrieval_mode,
                 web_fetcher=fetcher,
                 passage_chunker=(
-                    PassageChunker(settings) if retrieval_mode == "hybrid" else None
+                    PassageChunker(settings) if retrieval_mode != "snippet" else None
                 ),
                 retrieval_pipeline=factory.create_retrieval_pipeline(),
+                query_rewriter=QueryRewriter(max_queries=settings.query_rewrite_count),
             )
             result = asyncio.run(orchestrator.run(question))
     except (ValueError, RecResearcherError) as exc:
@@ -336,6 +451,62 @@ def run(
         raise typer.Exit(code=2) from exc
     typer.echo(f"Run ID: {result.run_id}")
     typer.echo(f"Report: {orchestrator.output_dir / result.run_id / 'report.md'}")
+
+
+@app.command()
+def ablate(
+    benchmark_path: Annotated[Path, typer.Argument(help="JSONL benchmark file.")],
+    output_dir: Annotated[Path, typer.Option("--output-dir")] = Path(
+        "outputs/ablations"
+    ),
+    mode: Annotated[Literal["mock", "real"], typer.Option("--mode")] = "mock",
+    max_concurrency: Annotated[int, typer.Option("--concurrency", min=1)] = 3,
+    resume: Annotated[bool, typer.Option("--resume")] = False,
+    config: Annotated[Path | None, typer.Option("--config")] = None,
+    mock: Annotated[bool, typer.Option("--mock")] = False,
+) -> None:
+    """Run all six retrieval modes with one dataset and configuration."""
+
+    if mock:
+        mode = "mock"
+    summaries: list[BenchmarkSummary] = []
+    for ablation_name in AblationName:
+        destination = output_dir / ablation_name.value
+        benchmark(
+            benchmark_path=benchmark_path,
+            mode=mode,
+            output_dir=destination,
+            max_concurrency=max_concurrency,
+            retrieval_mode=ablation_name.value,
+            request_timeout=None,
+            task_timeout=None,
+            case_timeout=None,
+            report_timeout=None,
+            max_retries=None,
+            vector_store=None,
+            retrieval_concurrency=None,
+            fetch_concurrency=None,
+            resume=resume,
+            config=config,
+            mock=mock,
+        )
+        summaries.append(
+            BenchmarkSummary.model_validate_json(
+                (destination / "summary.json").read_text(encoding="utf-8")
+            )
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    table = comparison_markdown(summaries)
+    (output_dir / "ablation-summary.md").write_text(table, encoding="utf-8")
+    (output_dir / "ablation-results.json").write_text(
+        json.dumps(
+            [item.model_dump(mode="json") for item in summaries],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    typer.echo(f"Ablation summary: {output_dir / 'ablation-summary.md'}")
 
 
 @app.command()
