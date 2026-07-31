@@ -3,6 +3,8 @@
 from collections.abc import Sequence
 from typing import Protocol
 
+from pydantic import BaseModel, ConfigDict
+
 from rec_researcher.core.models import PassageRecord, SourceRecord
 
 
@@ -40,17 +42,27 @@ class TextEmbedder(Protocol):
         ...
 
 
+class RerankResult(BaseModel):
+    """A reranked document tied to its original input position."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    index: int
+    document: str
+    relevance_score: float
+
+
 class PassageReranker(Protocol):
-    """Asynchronous passage-reranking capability."""
+    """Asynchronous document reranking with stable input positions."""
 
     async def rerank(
         self,
         query: str,
-        passages: Sequence[PassageRecord],
+        documents: Sequence[str],
         *,
-        limit: int,
-    ) -> list[PassageRecord]:
-        """Rank passages by relevance; empty input returns an empty list."""
+        top_n: int,
+    ) -> list[RerankResult]:
+        """Rank documents by relevance; empty input returns an empty list."""
         ...
 
 
@@ -67,4 +79,8 @@ class VectorIndex(Protocol):
         self, vector: Sequence[float], *, limit: int
     ) -> list[VectorSearchResult]:
         """Return scored nearest passages."""
+        ...
+
+    def scoped(self, namespace: str) -> "VectorIndex":
+        """Return an index isolated to one run/task namespace."""
         ...

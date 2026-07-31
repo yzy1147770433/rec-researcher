@@ -6,7 +6,9 @@ import hashlib
 import re
 from collections.abc import Sequence
 
-from rec_researcher.core.models import PassageRecord, SourceRecord
+from rec_researcher.core.models import SourceRecord
+from rec_researcher.providers.base import RerankResult
+from rec_researcher.retrieval.fetcher import FetchResult
 
 
 class MockLanguageModel:
@@ -72,6 +74,21 @@ class MockSearchProvider:
         ]
 
 
+class MockWebFetcher:
+    """Turn fictional search metadata into deterministic offline page text."""
+
+    async def fetch(self, source: SourceRecord) -> FetchResult:
+        """Return a stable successful fetch without network or filesystem access."""
+
+        text = f"{source.title}. {source.snippet} {source.snippet}"
+        return FetchResult(
+            source_id=source.id,
+            url=str(source.url),
+            success=True,
+            text=text,
+        )
+
+
 class MockTextEmbedder:
     """Create fixed-size deterministic embeddings from SHA-256 bytes."""
 
@@ -98,26 +115,35 @@ class MockTextEmbedder:
 
 
 class MockPassageReranker:
-    """Rank passages by deterministic token overlap and original position."""
+    """Rank documents by deterministic token overlap and original position."""
 
     async def rerank(
         self,
         query: str,
-        passages: Sequence[PassageRecord],
+        documents: Sequence[str],
         *,
-        limit: int,
-    ) -> list[PassageRecord]:
-        """Return the most overlapping passages; empty input is safe."""
+        top_n: int,
+    ) -> list[RerankResult]:
+        """Return ranked documents with stable input positions."""
 
-        if limit <= 0 or not passages:
+        if top_n <= 0 or not documents:
             return []
         query_tokens = set(re.findall(r"\w+", query.casefold()))
-        scored = enumerate(passages)
+        scored = enumerate(documents)
         ranked = sorted(
             scored,
             key=lambda pair: (
-                -len(query_tokens & set(re.findall(r"\w+", pair[1].text.casefold()))),
+                -len(query_tokens & set(re.findall(r"\w+", pair[1].casefold()))),
                 pair[0],
             ),
         )
-        return [passage for _, passage in ranked[:limit]]
+        return [
+            RerankResult(
+                index=index,
+                document=document,
+                relevance_score=float(
+                    len(query_tokens & set(re.findall(r"\w+", document.casefold())))
+                ),
+            )
+            for index, document in ranked[:top_n]
+        ]

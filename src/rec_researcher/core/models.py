@@ -2,8 +2,9 @@
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, computed_field
 
 
 class DomainModel(BaseModel):
@@ -53,6 +54,21 @@ class PassageRecord(DomainModel):
     position: int = Field(default=0, ge=0)
     start_offset: int = Field(default=0, ge=0)
     end_offset: int = Field(default=0, ge=0)
+    content_origin: Literal["fetched", "search_snippet_fallback"] = "fetched"
+
+    @computed_field
+    @property
+    def passage_id(self) -> str:
+        """Expose the stable passage identifier under its domain name."""
+
+        return self.id
+
+    @computed_field
+    @property
+    def chunk_index(self) -> int:
+        """Expose the chunk index while retaining ``position`` compatibility."""
+
+        return self.position
 
 
 class EvidenceRecord(DomainModel):
@@ -63,7 +79,12 @@ class EvidenceRecord(DomainModel):
     passage_id: str
     claim_hint: str
     excerpt: str
-    relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    relevance_score: float = 0.0
+    lexical_rank: int | None = Field(default=None, ge=1)
+    dense_rank: int | None = Field(default=None, ge=1)
+    rrf_score: float | None = Field(default=None, ge=0.0)
+    rerank_score: float | None = None
+    selection_stage: str = "snippet"
 
 
 class CitationValidation(DomainModel):
@@ -101,6 +122,25 @@ class RunStatistics(DomainModel):
     passages_created: int = Field(default=0, ge=0)
     evidence_items: int = Field(default=0, ge=0)
     elapsed_seconds: float = Field(default=0.0, ge=0.0)
+    fetch_attempts: int = Field(default=0, ge=0)
+    fetch_successes: int = Field(default=0, ge=0)
+    fetch_failures: int = Field(default=0, ge=0)
+    fallback_passages: int = Field(default=0, ge=0)
+    raw_passage_count: int = Field(default=0, ge=0)
+    deduplicated_passage_count: int = Field(default=0, ge=0)
+    bm25_candidate_count: int = Field(default=0, ge=0)
+    dense_candidate_count: int = Field(default=0, ge=0)
+    fused_candidate_count: int = Field(default=0, ge=0)
+    reranked_candidate_count: int = Field(default=0, ge=0)
+    final_passage_count: int = Field(default=0, ge=0)
+    embedding_calls: int = Field(default=0, ge=0)
+    embedding_text_count: int = Field(default=0, ge=0)
+    reranker_calls: int = Field(default=0, ge=0)
+    degradation_events: int = Field(default=0, ge=0)
+    retrieval_latency_ms: float = Field(default=0.0, ge=0.0)
+    fetch_latency_ms: float = Field(default=0.0, ge=0.0)
+    embedding_latency_ms: float = Field(default=0.0, ge=0.0)
+    rerank_latency_ms: float = Field(default=0.0, ge=0.0)
 
 
 class ResearchOutput(DomainModel):
@@ -131,6 +171,14 @@ class RunBudgetRecord(DomainModel):
     fetched_pages: int = Field(default=0, ge=0)
     source_count: int = Field(default=0, ge=0)
     passage_count: int = Field(default=0, ge=0)
+    fetch_attempts: int = Field(default=0, ge=0)
+    fetch_successes: int = Field(default=0, ge=0)
+    fetch_failures: int = Field(default=0, ge=0)
+    fallback_passages: int = Field(default=0, ge=0)
+    raw_passage_count: int = Field(default=0, ge=0)
+    deduplicated_passage_count: int = Field(default=0, ge=0)
+    embedding_text_count: int = Field(default=0, ge=0)
+    degradation_events: int = Field(default=0, ge=0)
     warnings: list[str] = Field(default_factory=list)
     failed_tasks: list[str] = Field(default_factory=list)
 

@@ -63,6 +63,7 @@ class OpenAICompatibleLanguageModel:
         self._owns_client = client is None
         self._timeout = settings.request_timeout_seconds
         self._max_attempts = settings.max_retries + 1
+        self._max_tokens = settings.llm_max_tokens
 
     async def generate(self, prompt: str, *, system: str | None = None) -> str:
         """Generate text, retrying only explicitly transient status codes."""
@@ -82,7 +83,11 @@ class OpenAICompatibleLanguageModel:
                     response = await self._client.post(
                         f"{self.base_url}/chat/completions",
                         headers={"Authorization": f"Bearer {self._api_key}"},
-                        json={"model": self.model, "messages": messages},
+                        json={
+                            "model": self.model,
+                            "messages": messages,
+                            "max_tokens": self._max_tokens,
+                        },
                         timeout=self._timeout,
                     )
                 except httpx.RequestError as exc:

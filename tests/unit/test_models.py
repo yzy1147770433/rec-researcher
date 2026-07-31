@@ -39,6 +39,9 @@ def test_source_passage_and_evidence_preserve_links() -> None:
 
     assert str(source.url) == "https://example.com/study"
     assert passage.source_id == source.id
+    assert passage.passage_id == passage.id
+    assert passage.chunk_index == passage.position
+    assert passage.model_dump()["passage_id"] == passage.id
     assert evidence.source_id == source.id
     assert evidence.passage_id == passage.id
 

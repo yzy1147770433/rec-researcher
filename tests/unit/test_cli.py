@@ -1,4 +1,5 @@
 import json
+from inspect import signature
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,8 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from rec_researcher import __version__
-from rec_researcher.cli import app
-from rec_researcher.core.settings import Settings
+from rec_researcher.cli import app, benchmark
 
 runner = CliRunner()
 
@@ -78,6 +78,29 @@ def test_run_mock_creates_output(tmp_path: Path) -> None:
     assert "Run ID:" in result.stdout
 
 
+def test_run_mock_hybrid_is_completely_offline(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "hybrid recommendation",
+            "--mode",
+            "mock",
+            "--retrieval-mode",
+            "hybrid",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    run_directories = list(tmp_path.iterdir())
+    assert len(run_directories) == 1
+    payload = json.loads((run_directories[0] / "run.json").read_text())
+    assert payload["output"]["statistics"]["embedding_calls"] > 0
+    assert not (tmp_path / "data" / "rec_researcher.db").exists()
+
+
 def test_run_rejects_empty_question() -> None:
     result = runner.invoke(app, ["run", " ", "--mode", "mock"])
 
@@ -113,17 +136,51 @@ def test_run_real_fails_early_when_configuration_is_missing(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_run_real_hybrid_requires_configured_non_mock_retrieval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_run(_orchestrator: object, _question: str) -> object:
+        return SimpleNamespace(run_id="hybrid-run")
+
+    monkeypatch.setattr("rec_researcher.cli.ResearchOrchestrator.run", fake_run)
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "question",
+            "--mode",
+            "real",
+            "--retrieval-mode",
+            "hybrid",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        env={
+            "REC_LLM_BASE_URL": "https://llm.invalid/v1",
+            "REC_LLM_API_KEY": "llm-secret",
+            "REC_LLM_MODEL": "model",
+            "REC_TAVILY_API_KEY": "tavily-secret",
+            "REC_SILICONFLOW_API_KEY": "",
+            "REC_EMBEDDING_MODEL": "",
+            "REC_RERANKER_MODEL": "",
+        },
+    )
+
+    assert result.exit_code == 2
+    assert "embedding_model" in result.output
+
+
 def test_run_real_applies_cli_timeout_to_provider_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[float] = []
 
-    def capture_settings(settings: Settings) -> None:
-        captured.append(settings.request_timeout_seconds)
+    def capture_settings(factory: object) -> None:
+        captured.append(factory.settings.request_timeout_seconds)  # type: ignore[attr-defined]
         raise ValueError("stop after settings capture")
 
     monkeypatch.setattr(
-        "rec_researcher.cli.OpenAICompatibleLanguageModel", capture_settings
+        "rec_researcher.cli.ProviderFactory.create_language_model", capture_settings
     )
     result = runner.invoke(
         app,
@@ -138,6 +195,20 @@ def test_run_real_applies_cli_timeout_to_provider_settings(
 
     assert result.exit_code == 2
     assert captured == [600.0]
+
+
+def test_run_help_lists_retrieval_provider_options() -> None:
+    result = runner.invoke(app, ["run", "--help"])
+
+    assert result.exit_code == 0
+    for option in (
+        "--retrieval-mode",
+        "--fetch-concurrency",
+        "--embedding-provider",
+        "--reranker-provider",
+        "--vector-store",
+    ):
+        assert option in result.stdout
 
 
 def test_run_real_does_not_create_unused_milvus_database(
@@ -188,4 +259,50 @@ def test_benchmark_mock_writes_summary(tmp_path: Path) -> None:
     assert "Cases: 5/5 successful" in result.stdout
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["total_cases"] == 5
-    assert summary["mean_metrics"]["recall_at_k"] is None
+    assert summary["mean_metrics"]["recall_at_5"] is None
+
+
+def test_benchmark_help_exposes_real_hybrid_options() -> None:
+    result = runner.invoke(app, ["benchmark", "--help"], terminal_width=180)
+
+    assert result.exit_code == 0
+    assert "--retrieval-mode" in result.output
+    assert "real" in result.output
+    assert {
+        "request_timeout",
+        "task_timeout",
+        "case_timeout",
+        "report_timeout",
+        "max_retries",
+        "vector_store",
+        "retrieval_concurrency",
+        "fetch_concurrency",
+        "resume",
+    } <= set(signature(benchmark).parameters)
+
+
+def test_benchmark_real_fails_before_network_when_configuration_missing(
+    tmp_path: Path,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "examples/bench/recsys10.v0.2.jsonl",
+            "--mode",
+            "real",
+            "--retrieval-mode",
+            "hybrid",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        env={
+            "REC_LLM_BASE_URL": "",
+            "REC_LLM_API_KEY": "",
+            "REC_LLM_MODEL": "",
+            "REC_TAVILY_API_KEY": "",
+        },
+    )
+
+    assert result.exit_code == 2
+    assert "Missing real-mode configuration" in result.output

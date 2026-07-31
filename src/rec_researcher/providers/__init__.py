@@ -6,6 +6,7 @@ from rec_researcher.providers.mock import (
     MockPassageReranker,
     MockSearchProvider,
     MockTextEmbedder,
+    MockWebFetcher,
 )
 from rec_researcher.providers.siliconflow import (
     SiliconFlowEmbedder,
@@ -19,9 +20,28 @@ __all__ = [
     "MockPassageReranker",
     "MockSearchProvider",
     "MockTextEmbedder",
+    "MockWebFetcher",
     "OpenAICompatibleLanguageModel",
+    "ProviderFactory",
+    "ProviderSelection",
     "SiliconFlowEmbedder",
     "SiliconFlowReranker",
     "SiliconFlowRerankResult",
     "TavilySearchProvider",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Load factory exports lazily to avoid retrieval/provider import cycles."""
+
+    if name in {"ProviderFactory", "ProviderSelection"}:
+        from rec_researcher.providers.factory import (
+            ProviderFactory,
+            ProviderSelection,
+        )
+
+        return {
+            "ProviderFactory": ProviderFactory,
+            "ProviderSelection": ProviderSelection,
+        }[name]
+    raise AttributeError(name)

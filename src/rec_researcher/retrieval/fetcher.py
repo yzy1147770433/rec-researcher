@@ -104,6 +104,12 @@ class AsyncWebFetcher:
                 return self._failure(
                     source_id, url, f"binary content type: {content_type}", response
                 )
+            if content_type and not any(
+                marker in content_type for marker in ("text/html", "application/xhtml")
+            ):
+                return self._failure(
+                    source_id, url, f"non-HTML content type: {content_type}", response
+                )
             declared_size = response.headers.get("content-length")
             if declared_size and int(declared_size) > self._max_response_bytes:
                 return self._failure(

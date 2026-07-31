@@ -1,5 +1,5 @@
-{"id":"generative-vs-two-tower","question":"生成式推荐与传统双塔模型有什么区别？"}
-{"id":"semantic-id","question":"Semantic ID 在推荐系统中的作用是什么？"}
-{"id":"itemcf-vs-vector","question":"ItemCF 与向量召回有什么区别？"}
-{"id":"single-gpu-paper","question":"哪些推荐系统论文适合单卡复现？"}
-{"id":"din-deepfm-mmoe","question":"DIN、DeepFM、MMOE 分别适合什么任务，它们的差异是什么？"}
+{"id":"generative-vs-two-tower","question":"生成式推荐与传统双塔模型有什么区别？","category":"生成式推荐","gold_sources":[],"annotation_version":"v0.2-template","annotated_by":"TODO: human annotator","annotated_at":"2026-07-30T00:00:00Z"}
+{"id":"semantic-id","question":"Semantic ID 在推荐系统中的作用是什么？","category":"Semantic ID","gold_sources":[],"annotation_version":"v0.2-template","annotated_by":"TODO: human annotator","annotated_at":"2026-07-30T00:00:00Z"}
+{"id":"itemcf-vs-vector","question":"ItemCF 与向量召回有什么区别？","category":"ItemCF","gold_sources":[],"annotation_version":"v0.2-template","annotated_by":"TODO: human annotator","annotated_at":"2026-07-30T00:00:00Z"}
+{"id":"single-gpu-paper","question":"哪些推荐系统论文适合单卡复现？","category":"复现","gold_sources":[],"annotation_version":"v0.2-template","annotated_by":"TODO: human annotator","annotated_at":"2026-07-30T00:00:00Z"}
+{"id":"din-deepfm-mmoe","question":"DIN、DeepFM、MMOE 分别适合什么任务，它们的差异是什么？","category":"排序模型","gold_sources":[],"annotation_version":"v0.2-template","annotated_by":"TODO: human annotator","annotated_at":"2026-07-30T00:00:00Z"}

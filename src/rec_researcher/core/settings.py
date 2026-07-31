@@ -6,6 +6,11 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+EmbeddingProvider = Literal["mock", "siliconflow", "none"]
+RerankerProvider = Literal["mock", "siliconflow", "none"]
+VectorStore = Literal["memory", "milvus", "none"]
+RetrievalMode = Literal["snippet", "hybrid"]
+
 
 def _is_configured(value: object) -> bool:
     """Check presence while keeping secret values inside ``SecretStr``."""
@@ -30,16 +35,25 @@ class Settings(BaseSettings):
     mode: Literal["mock", "real"] = "mock"
     output_dir: Path = Path("outputs")
     max_concurrency: int = Field(default=3, ge=1)
+    fetch_concurrency: int = Field(default=3, ge=1)
     request_timeout_seconds: float = Field(default=30.0, gt=0)
+    task_timeout_seconds: float = Field(default=180.0, gt=0)
+    case_timeout_seconds: float = Field(default=600.0, gt=0)
+    report_timeout_seconds: float = Field(default=120.0, gt=0)
     max_retries: int = Field(default=2, ge=0)
     max_response_bytes: int = Field(default=5_000_000, ge=1)
     max_sources_per_query: int = Field(default=5, ge=1)
     max_total_sources: int = Field(default=30, ge=1)
     max_tasks: int = Field(default=5, ge=1)
+    embedding_provider: EmbeddingProvider = "siliconflow"
+    reranker_provider: RerankerProvider = "siliconflow"
+    vector_store: VectorStore = "milvus"
+    retrieval_mode: RetrievalMode = "snippet"
 
     llm_base_url: str | None = None
     llm_api_key: SecretStr | None = None
     llm_model: str | None = None
+    llm_max_tokens: int = Field(default=2048, ge=1)
     tavily_base_url: str = "https://api.tavily.com"
     tavily_api_key: SecretStr | None = None
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"

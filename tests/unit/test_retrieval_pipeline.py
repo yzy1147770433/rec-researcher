@@ -20,6 +20,10 @@ def _passages() -> list[PassageRecord]:
 
 
 class FakeVectorIndex:
+    def scoped(self, namespace: str) -> "FakeVectorIndex":
+        assert namespace
+        return self
+
     async def upsert_passages(
         self,
         passages: Sequence[PassageRecord],
@@ -69,6 +73,51 @@ class FailingReranker:
         raise RuntimeError("reranker unavailable")
 
 
+class FailingVectorIndex(FakeVectorIndex):
+    async def upsert_passages(
+        self,
+        passages: Sequence[PassageRecord],
+        vectors: Sequence[Sequence[float]],
+    ) -> None:
+        raise RuntimeError("milvus unavailable")
+
+
+class RecordingReranker(FakeReranker):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def rerank(
+        self, query: str, documents: Sequence[str], *, top_n: int
+    ) -> list[SiliconFlowRerankResult]:
+        self.calls += 1
+        return await super().rerank(query, documents, top_n=top_n)
+
+
+class ClosableEmbedder(MockTextEmbedder):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class ClosableReranker(FakeReranker):
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class ClosableVectorIndex(FakeVectorIndex):
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 async def test_pipeline_runs_all_stages() -> None:
     pipeline = RetrievalPipeline(
         embedder=MockTextEmbedder(),
@@ -81,6 +130,25 @@ async def test_pipeline_runs_all_stages() -> None:
 
     assert len(result.passages) == 2
     assert result.warnings == []
+    assert result.statistics.embedding_calls == 2
+    assert result.statistics.embedding_text_count == 4
+    assert result.statistics.reranker_calls == 1
+    assert all(trace.selection_stage == "mmr" for trace in result.traces.values())
+
+
+async def test_pipeline_closes_provider_and_root_vector_resources() -> None:
+    embedder = ClosableEmbedder()
+    reranker = ClosableReranker()
+    vector_index = ClosableVectorIndex()
+    pipeline = RetrievalPipeline(
+        embedder=embedder, vector_index=vector_index, reranker=reranker
+    )
+
+    await pipeline.aclose()
+
+    assert embedder.closed
+    assert reranker.closed
+    assert vector_index.closed
 
 
 async def test_embedding_failure_keeps_bm25_and_adds_warning() -> None:
@@ -95,6 +163,24 @@ async def test_embedding_failure_keeps_bm25_and_adds_warning() -> None:
 
     assert result.passages
     assert "using BM25 only" in result.warnings[0]
+    assert result.statistics.dense_candidate_count == 0
+    assert result.statistics.degradation_events == 1
+
+
+async def test_vector_store_failure_keeps_bm25_and_adds_warning() -> None:
+    pipeline = RetrievalPipeline(
+        embedder=MockTextEmbedder(),
+        vector_index=FailingVectorIndex(),
+        reranker=FakeReranker(),
+        mmr_top_k=2,
+    )
+
+    result = await pipeline.retrieve("vector search", _passages())
+
+    assert result.passages
+    assert "vector store failed" in result.warnings[0]
+    assert result.statistics.embedding_calls == 2
+    assert result.statistics.dense_candidate_count == 0
 
 
 async def test_reranker_failure_keeps_rrf_and_adds_warning() -> None:
@@ -112,13 +198,39 @@ async def test_reranker_failure_keeps_rrf_and_adds_warning() -> None:
 
 
 async def test_pipeline_empty_corpus_is_safe() -> None:
+    reranker = RecordingReranker()
     pipeline = RetrievalPipeline(
         embedder=FailingEmbedder(),
         vector_index=FakeVectorIndex(),
-        reranker=FailingReranker(),
+        reranker=reranker,
     )
 
     result = await pipeline.retrieve("query", [])
 
     assert result.passages == []
     assert result.warnings == []
+    assert result.statistics.embedding_calls == 0
+    assert result.statistics.reranker_calls == 0
+    assert reranker.calls == 0
+
+
+async def test_mmr_failure_preserves_reranker_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_mmr(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("mmr unavailable")
+
+    monkeypatch.setattr(
+        "rec_researcher.retrieval.pipeline.maximal_marginal_relevance", fail_mmr
+    )
+    pipeline = RetrievalPipeline(
+        embedder=MockTextEmbedder(),
+        vector_index=FakeVectorIndex(),
+        reranker=FakeReranker(),
+        mmr_top_k=2,
+    )
+
+    result = await pipeline.retrieve("vector search", _passages())
+
+    assert "MMR failed" in result.warnings[0]
+    assert all(trace.selection_stage == "reranker" for trace in result.traces.values())

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,83 @@ class VectorSearchHit(BaseModel):
     text: str
     rank: int
     score: float
+
+
+class InMemoryVectorIndex:
+    """Deterministic process-local vector index for offline retrieval."""
+
+    def __init__(self) -> None:
+        """Create an empty index."""
+
+        self._entries: dict[str, tuple[PassageRecord, list[float]]] = {}
+        self._dimension: int | None = None
+
+    async def upsert_passages(
+        self,
+        passages: Sequence[PassageRecord],
+        vectors: Sequence[Sequence[float]],
+    ) -> None:
+        """Insert or replace passage/vector pairs in input order."""
+
+        if not passages and not vectors:
+            return
+        if len(passages) != len(vectors):
+            raise ValueError(
+                "passages and vectors must contain the same number of items"
+            )
+        dimension = MilvusLiteIndex._validate_vectors(vectors)
+        if self._dimension is not None and dimension != self._dimension:
+            raise ValueError(
+                f"vector dimension mismatch: index expects {self._dimension}, "
+                f"got {dimension}"
+            )
+        self._dimension = dimension
+        for passage, vector in zip(passages, vectors, strict=True):
+            self._entries[passage.id] = (passage, list(vector))
+
+    async def search(
+        self, vector: Sequence[float], *, limit: int
+    ) -> list[VectorSearchHit]:
+        """Return cosine-similar passages with deterministic tie-breaking."""
+
+        if not vector:
+            raise ValueError("search vector must not be empty")
+        if limit <= 0 or self._dimension is None:
+            return []
+        if len(vector) != self._dimension:
+            raise ValueError(
+                f"search vector dimension mismatch: index expects "
+                f"{self._dimension}, got {len(vector)}"
+            )
+        query_norm = math.sqrt(sum(value * value for value in vector))
+        scored: list[tuple[float, PassageRecord]] = []
+        for passage, stored in self._entries.values():
+            stored_norm = math.sqrt(sum(value * value for value in stored))
+            denominator = query_norm * stored_norm
+            score = (
+                sum(left * right for left, right in zip(vector, stored, strict=True))
+                / denominator
+                if denominator
+                else 0.0
+            )
+            scored.append((score, passage))
+        scored.sort(key=lambda item: (-item[0], item[1].id))
+        return [
+            VectorSearchHit(
+                passage_id=passage.id,
+                source_id=passage.source_id,
+                text=passage.text,
+                rank=rank,
+                score=score,
+            )
+            for rank, (score, passage) in enumerate(scored[:limit], start=1)
+        ]
+
+    def scoped(self, namespace: str) -> InMemoryVectorIndex:
+        """Return a fresh process-local namespace."""
+
+        del namespace
+        return InMemoryVectorIndex()
 
 
 class MilvusLiteIndex:
@@ -176,3 +255,11 @@ class MilvusLiteIndex:
         """Release the underlying local database connection."""
 
         self._client.close()
+
+    def scoped(self, namespace: str) -> MilvusLiteIndex:
+        """Return a client using a namespace-specific collection."""
+
+        suffix = re.sub(r"[^A-Za-z0-9_]", "_", namespace)[:96]
+        return MilvusLiteIndex(
+            self.uri, collection_name=f"{self.collection_name}_{suffix}"
+        )

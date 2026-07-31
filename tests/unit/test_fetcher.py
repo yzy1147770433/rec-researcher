@@ -41,7 +41,11 @@ async def test_failed_url_does_not_stop_other_fetches() -> None:
 
 
 async def test_empty_html_is_safe() -> None:
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=""))
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, content=b"", headers={"content-type": "text/html"}
+        )
+    )
     async with httpx.AsyncClient(transport=transport) as client:
         result = await AsyncWebFetcher(_settings(), client=client).fetch(
             _source("empty", "https://example.test/empty")
@@ -97,7 +101,9 @@ async def test_retries_timeout_then_succeeds() -> None:
         calls += 1
         if calls == 1:
             raise httpx.ReadTimeout("timed out", request=request)
-        return httpx.Response(200, text="<p>recovered</p>")
+        return httpx.Response(
+            200, text="<p>recovered</p>", headers={"content-type": "text/html"}
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         result = await AsyncWebFetcher(_settings(max_retries=1), client=client).fetch(
@@ -106,3 +112,18 @@ async def test_retries_timeout_then_succeeds() -> None:
 
     assert result.success is True
     assert calls == 2
+
+
+async def test_rejects_non_html_content() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, text="plain response", headers={"content-type": "text/plain"}
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await AsyncWebFetcher(_settings(), client=client).fetch(
+            _source("plain", "https://example.test/plain")
+        )
+
+    assert result.success is False
+    assert "non-HTML" in (result.error or "")

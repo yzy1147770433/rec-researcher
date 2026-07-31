@@ -61,6 +61,24 @@ async def test_real_planner_accepts_markdown_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_planner_respects_configured_task_cap() -> None:
+    response = (
+        '{"tasks":['
+        + ",".join(
+            f'{{"objective":"task {index}","queries":["q{index}"]}}'
+            for index in range(1, 6)
+        )
+        + "]}"
+    )
+
+    tasks = await ResearchPlanner(
+        StubLanguageModel([response]), max_tasks=3
+    ).create_tasks("question")
+
+    assert len(tasks) == 3
+
+
+@pytest.mark.asyncio
 async def test_real_planner_repairs_once_then_fails_clearly() -> None:
     model = StubLanguageModel(["invalid", "still invalid"])
 
@@ -82,6 +100,17 @@ def test_budget_tracks_and_enforces_counts() -> None:
     assert budget.search_calls == 1
     assert budget.start_time.tzinfo is not None
     assert budget.elapsed_seconds >= 0
+    budget.record_fetch(success=True)
+    budget.record_fetch(success=False)
+    budget.record_fallback_passage()
+    budget.record_passage_counts(raw=3, deduplicated=2)
+    assert (budget.fetch_attempts, budget.fetch_successes, budget.fetch_failures) == (
+        2,
+        1,
+        1,
+    )
+    assert budget.fallback_passages == 1
+    assert (budget.raw_passage_count, budget.deduplicated_passage_count) == (3, 2)
     with pytest.raises(BudgetExceededError):
         budget.consume_task()
     with pytest.raises(BudgetExceededError):
