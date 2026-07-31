@@ -1,6 +1,6 @@
 [project]
 name = "rec-researcher"
-version = "0.1.1"
+version = "0.2.0"
 description = "Offline-testable research workflow for recommender-system questions"
 readme = "README.md"
 license = "MIT"

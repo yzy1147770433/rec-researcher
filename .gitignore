@@ -25,6 +25,8 @@ logs/
 # Tests and tooling
 .pytest_cache/
 .coverage
+coverage.json
+coverage.xml
 htmlcov/
 .ruff_cache/
 .mypy_cache/
